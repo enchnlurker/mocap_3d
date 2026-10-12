@@ -40,7 +40,7 @@ Two capture branches, one merge point. Everything from 3A on reads only `clean.n
 | 1a Capture: MediaPipe | video → 33 landmarks + confidence per frame; adapter maps to canonical joints | Mac |
 | 1b Capture: GVHMR | video → SMPL shape + rotations + root, gravity-aligned; SMPL FK → canonical joints | 4090, WSL2 Ubuntu |
 | 1c Depth (optional) | Depth Pro on 8 evenly spaced frames (default) → floor plane from ground pixels (camera pitch/height), body distance, torso surface samples. `--stride 1` for per-frame | Mac (MPS, ~3.4 s/frame; ~35 s per clip sparse) |
-| 1d Joint depth (for 2c) | `core/joint_depth.py`: Depth Pro on every 2nd frame, nearest-surface depth at each landmark's pixel → `depth_joints.npz`. Leaves `depth.npz` alone | Mac (~4.5 min per clip) |
+| 1d Joint depth (for 2c) | `core/joint_depth.py`: Sapiens2 point map (Z only) on every 2nd frame, scaled once per clip to Depth Pro on 1c's frames; nearest-surface depth at each landmark's pixel, on-person pixels only → `depth_joints.npz`. Needs 1c; leaves `depth.npz` alone | Mac (MPS fp16, ~5.5 s/frame; ~8 min per clip) |
 | 2 Cleanup | MediaPipe: swap fix, mask (joints hidden *in frame* keep MediaPipe's guess, flagged `occluded`), gap fill, zero-phase smoothing, floor plane, constant ground offset, 2D hip bob/sway, contacts, bone lengths. GVHMR: foot-skate fix only | Mac |
 | 2b Proportions | direction-preserving rebuild with ratio lengths → `positions_proportional` (start point / prior for 2c) | Mac |
 | 2c Fit to 2D | `core/fit2d.py`: per clip, solve pose + camera + one length per bone so joints project onto MediaPipe 2D, with per-joint relative depth, 2b as a weak prior → `positions_fit2d` (best result so far) | Mac (~15–35 s per clip) |
@@ -113,11 +113,11 @@ One file per stage in `data/<clip>/`. Every file carries `schema_version`, `fps`
 |---|---|
 | `capture_mediapipe.npz` | `landmarks [T,33,3]` world, `landmarks_2d [T,33,2]`, `confidence [T,33]`, video info |
 | `capture_gvhmr.npz` | SMPL `betas`, `body_pose`, `global_orient`, `transl`, predicted contacts, video info |
-| `depth.npz` | per processed frame: `floor_normal_cam`, `floor_d`, `camera_pitch_deg`, `torso_points_cam`, `pelvis_distance_m`, `focal_px`, 1/4-res `depth_maps` |
+| `depth.npz` | per processed frame: `floor_normal_cam`, `floor_d`, `camera_pitch_deg`, `torso_points_cam`, `pelvis_distance_m`, `focal_px`, 1/4-res `depth_maps`, 1/4-res `person_masks` |
 | `clean.npz` (2b keys) | `positions_proportional [T,20,3]`, `bone_lengths_proportional`, `proportional_height_m` |
 | `clean.npz` (2 keys, new) | `occluded [T,20]`, `uv_2d [T,20,2]` (normalized, swap-consistent), `presence [T,20]`, `root_motion [T,3]` |
 | `clean.npz` (2c keys, added by `fit2d.py`) | `positions_fit2d [T,20,3]`, `bone_lengths_fit2d [19]`, `fit2d_camera_pos [T,3]`, `fit2d_focal_px`; summary in `fit2d_depth_summary.json`. Re-run `fit2d.py` after `clean.py` |
-| `depth_joints.npz` | `frames`, `z_surface [N,33]` nearest-surface depth per landmark, `on_mask`, `in_frame`, `focal_px`, 1/4-res `depth_maps` |
+| `depth_joints.npz` | `frames`, `z_surface [N,33]` nearest-surface depth per landmark (NaN off the person), `on_mask`, `in_frame`, `focal_px` (from 1c), 1/4-res `depth_maps`, `scale` (Depth Pro / Sapiens2) |
 | `clean.npz` | canonical `positions [T,20,3]` floor at Z = 0, `positions_raw` (same frame, uncleaned), `root_pos [T,3]`, `contacts [T,4]` (l/r heel/toe), `bone_names/bone_pairs/bone_lengths` (symmetric medians), `floor_R/floor_offset`, `dropped/filled/swapped` masks, `source` |
 | `retarget_<body>.npz` | `qpos [T,nq]`, `joint_names`, per-frame IK residuals |
 | `sim_<body>_<tier>.npz` | simulated `qpos`, `helper_force [T]`, `fell` flag, metrics |

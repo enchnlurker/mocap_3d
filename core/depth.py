@@ -156,7 +156,7 @@ def run(clip: schema.Clip, n: int = 8, stride: int | None = None, device: str | 
     cx, cy = (W - 1) / 2, (H - 1) / 2
 
     rows = dict(floor_normal_cam=[], floor_d=[], camera_pitch_deg=[], floor_valid=[],
-                torso_points_cam=[], pelvis_distance_m=[], focal_px=[], depth_maps=[])
+                torso_points_cam=[], pelvis_distance_m=[], focal_px=[], depth_maps=[], person_masks=[])
     t0 = time.time()
     for i, rgb in video.frames(clip.video, frames):
         depth, f = infer(rgb)
@@ -178,6 +178,7 @@ def run(clip: schema.Clip, n: int = 8, stride: int | None = None, device: str | 
         rows["pelvis_distance_m"].append(_body_distance(depth, person, uv20[i]))
         rows["focal_px"].append(f)
         rows["depth_maps"].append(small.astype(np.float16))
+        rows["person_masks"].append(psmall)
         print(f"  frame {i}: f={f:.0f}px floor={'yes' if fl else 'no'}"
               + (f" pitch={fl['pitch_deg']:+.1f} h={fl['d']:.2f}m" if fl else ""))
     masker.close()

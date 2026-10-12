@@ -10,13 +10,15 @@ Status: M0–M2 done (capture, depth, cleanup, proportions, fit to 2D). M3 next.
 ```sh
 brew install uv ffmpeg
 brew install --cask blender   # for core.blender_view
-uv sync                      # Python 3.12 venv with mediapipe, torch (MPS), Depth Pro
+uv sync                      # Python 3.12 venv with mediapipe, torch (MPS), Depth Pro, transformers
 mkdir -p data/models
 curl -L -o data/models/pose_landmarker_heavy.task \
   https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_heavy/float16/latest/pose_landmarker_heavy.task
 curl -L -o data/models/depth_pro.pt https://ml-site.cdn-apple.com/models/depth-pro/depth_pro.pt   # 1.9 GB
 uv run python -m core.check_env
 ```
+
+Stage 1d downloads Sapiens2 (`facebook/sapiens2-pointmap-0.4b`, ~2 GB) into `data/models/hf/` on first run.
 
 ## Run a clip
 
@@ -30,7 +32,7 @@ or stage by stage (each reads/writes `data/<clip>/`):
 |---|---|---|
 | 1a | `python -m core.capture_mediapipe clip01 --video v.mp4 --overlay` | `capture_mediapipe.npz`, `overlay_mediapipe.mp4` |
 | 1c | `python -m core.depth clip01` (`--stride 1` per-frame) | `depth.npz` |
-| 1d | `python -m core.joint_depth clip01` | `depth_joints.npz` |
+| 1d | `python -m core.joint_depth clip01` (needs 1c) | `depth_joints.npz` |
 | 2 + 2b | `python -m core.clean clip01` | `clean_depth.npz` (or `clean.npz` with `--no-depth`), `clean_before_after.png` |
 | 2c | `python -m core.fit2d clip01` | adds `positions_fit2d` … to the clean file, `fit2d_depth_summary.json` |
 | checks | `python -m core.plots clip01` / `--all` | `camera_check.jpg`, `fullbody_check.jpg`, `data/camera_check_all.jpg` |

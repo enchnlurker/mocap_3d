@@ -4,6 +4,7 @@ import pytest
 from core import fit2d
 from core.clean import clean_arrays
 from core.depth import find_floor, plane_basis
+from core.joint_depth import clip_scale, surface_depth
 from core.skeleton import (GROUPS, J, N_JOINTS, RATIO_VEC, build_positions, extract_dirs,
                            group_lengths)
 from tests import synth
@@ -169,3 +170,25 @@ def test_clean_no_false_swap_when_arms_overlap_in_2d():
         lm2[t, [14, 16]] = mid - 1.0
     out = clean_arrays(cap)
     assert not out["swapped"][:, [J["l_elbow"], J["l_wrist"], J["r_elbow"], J["r_wrist"]]].any()
+
+
+def test_surface_depth_on_person_only():
+    depth = np.full((100, 100), 2.0, np.float32)
+    depth[:, 50:] = 1.0                          # a cup in front, right half
+    person = np.zeros((100, 100), bool)
+    person[:, :40] = True
+    uv = np.array([[20.0, 50], [80, 50], [-5, 50]])
+    z, on, inside = surface_depth(depth, person, uv)
+    assert z[0] == pytest.approx(2.0) and on[0]
+    assert np.isnan(z[1]) and not on[1]          # patch misses the person: no reading
+    assert np.isnan(z[2]) and not inside[2]
+
+
+def test_clip_scale_recovers_factor():
+    rng = np.random.default_rng(0)
+    s2 = rng.uniform(0.8, 1.2, (8, 30, 40)).astype(np.float32)
+    masks = np.zeros_like(s2, bool)
+    masks[:, 10:20, 15:25] = True
+    ref = np.where(masks, 3.7 * s2, 9.0)         # background disagrees; only the body counts
+    masks[0] = False                             # a frame without the person is skipped
+    assert clip_scale(ref, s2, masks) == pytest.approx(3.7, rel=1e-4)

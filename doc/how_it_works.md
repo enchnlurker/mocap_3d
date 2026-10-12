@@ -1,6 +1,6 @@
 # How the current result works (stages 1–2c)
 
-The current result is MediaPipe's 2D keypoints, which are accurate, turned into 3D by a solver. That solver uses bone lengths, Depth Pro depth and MediaPipe's own 3D pose as supporting evidence. Everything before the last stage exists to prepare those inputs.
+The current result is MediaPipe's 2D keypoints, which are accurate, turned into 3D by a solver. That solver uses bone lengths, per-joint depth (Sapiens2, scaled to Depth Pro) and MediaPipe's own 3D pose as supporting evidence. Everything before the last stage exists to prepare those inputs.
 
 ## Data flow
 
@@ -33,7 +33,7 @@ source.mp4
 - **Camera tilt and height.**
 - **Focal length:** used later as the camera lens.
 
-**1d: joint depth.** Depth Pro runs on every 2nd frame. For each landmark it reads the nearest surface in a small patch around its pixel, preferring pixels on the person. That's skin, not the joint centre. If something covers the joint, it's the covering object, which is why 2c treats some readings as "at least this far" only.
+**1d: joint depth.** Sapiens2 (a Meta model for people that predicts a 3D point per pixel) runs on every 2nd frame; only its depth (Z) is used. Its own scale is ignored: Sapiens2 also runs on 1c's 8 frames, and the ratio of Depth Pro's median body depth to Sapiens2's gives one scale factor for the clip. For each landmark it reads the nearest surface in a small patch around its pixel, using only pixels on the person; a patch with no person pixels (a cup or table in front) gives no reading, because Sapiens2's depth off the body isn't trusted. The reading is skin, not the joint centre. If another body part covers the joint, it's that part, which is why 2c treats some readings as "at least this far" only.
 
 ## Step 2: clean, proportions, fit
 
@@ -63,7 +63,7 @@ That's roughly 15,000 numbers for a 300-frame clip.
 
 **Fixed structure.** Joint positions are built from the pelvis outward: each joint = parent + length × direction. Both shoulders hang off the neck in opposite directions, both hips off the pelvis, and the two spine halves are in line. So the neck and pelvis stay true midpoints.
 
-**Camera.** The camera is a pinhole at the origin, with Depth Pro's focal length and the principal point at the image centre. A joint's pixel is: pixel = focal × (x, y) / z + centre.
+**Camera.** The camera is a pinhole at the origin, with Depth Pro's focal length (from 1c) and the principal point at the image centre. A joint's pixel is: pixel = focal × (x, y) / z + centre.
 
 **Cost terms.** The solver minimizes their sum; each term encodes one fact:
 

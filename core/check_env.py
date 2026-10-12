@@ -11,7 +11,7 @@ from core.schema import MODELS
 
 def main():
     print(f"python {platform.python_version()} on {platform.platform()}")
-    for mod in ("numpy", "scipy", "cv2", "mediapipe", "torch", "depth_pro", "matplotlib"):
+    for mod in ("numpy", "scipy", "cv2", "mediapipe", "torch", "depth_pro", "transformers", "matplotlib"):
         try:
             m = importlib.import_module(mod)
             print(f"  {mod:<11} {getattr(m, '__version__', 'ok')}")
