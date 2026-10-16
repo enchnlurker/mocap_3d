@@ -1,6 +1,6 @@
 # Glossary
 
-- **2b**: proportions stage; MediaPipe bone directions, standard adult lengths (H = trunk / 0.288).
+- **2b**: proportions stage; MediaPipe bone directions, standard adult lengths (H = trunk / 0.288, 1.50–1.95 m).
 - **2c / fit2d**: per-clip solve so the skeleton projects onto MediaPipe 2D, with relative depth from 1d (Sapiens2 scaled to Depth Pro).
 - **captured / tracked**: joint was seen (visible or occluded-in-frame) in at least one frame; never guessed.
 - **occluded**: low visibility, presence ≥ 0.5, inside the frame (3 % margin): hidden in frame, MediaPipe's guess kept.
@@ -17,6 +17,6 @@
 - **image width**: shoulder / hip width from the widest on-screen span, used by 2c when the person faced the camera at some point.
 - **spec.json / body.xml**: a body's editable source of truth and the MJCF generated from it (3A).
 - **unstick**: retarget rule restarting a straight elbow / knee at its target's bend.
-- **pop**: a hinge jumping more than 30° in one frame (at 30 fps).
+- **pop**: a hinge jumping more than 15° in one frame (at 30 fps).
 - **body shapes**: per-frame world pose of every body geom (`bodyshapes_<body>.npz`).
 - **props**: 3A2 collision shapes the body touches (support) or holds (held, attached to a body part).

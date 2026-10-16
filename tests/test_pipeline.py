@@ -5,7 +5,7 @@ from core import fit2d
 from core.clean import clean_arrays
 from core.depth import find_floor, plane_basis
 from core.joint_depth import clip_scale, surface_depth
-from core.skeleton import (GROUPS, J, N_JOINTS, RATIO_VEC, build_positions, extract_dirs,
+from core.skeleton import (D, GROUPS, J, N_JOINTS, RATIO_VEC, build_positions, extract_dirs, normalize,
                            group_lengths)
 from tests import synth
 
@@ -286,3 +286,28 @@ def test_image_widths_facing_vs_side():
     # side view: the shoulders overlap on screen, so the ratio width stays
     x.uv[:, J["r_shoulder"]] = x.uv[:, J["l_shoulder"]] + 3.0
     assert not fit2d.image_widths(x, P)["shoulder"]["used"]
+
+
+def test_lap_covers_hip_when_thigh_points_at_camera():
+    x, P = _depth_case()
+    P = P.copy()
+    f = x.depth_frames
+    assert not fit2d.lap_cover(x, P).any()            # standing: thighs hang down
+    k = f[2]
+    P[k, J["l_knee"]] = P[k, J["l_hip"]] + [0.0, 0.05, -0.40]   # seated, thigh toward the camera
+    lap = fit2d.lap_cover(x, P)
+    assert lap[2, J["l_hip"]] and lap[2, J["pelvis"]] and not lap[2, J["r_hip"]]
+
+
+def test_2b_head_tip_and_height_clamp():
+    from core.proportions import HEAD_TIP_MAX_DEG, height_from_trunk, limit_head_tip
+
+    pos, _ = synth.motion(T=10)
+    d = extract_dirs(pos)
+    d[:, D["head"]] = normalize(d[:, D["spine"]] + 2.0 * np.array([0, -1.0, 0]))   # ~60 deg forward
+    out = limit_head_tip(d)
+    ang = np.degrees(np.arccos((out[:, D["head"]] * out[:, D["spine"]]).sum(-1)))
+    assert np.allclose(ang, HEAD_TIP_MAX_DEG, atol=0.01)
+    assert np.allclose(out[:, D["l_thigh"]], d[:, D["l_thigh"]])
+    short = pos * 0.75                                  # trunk says 1.28 m
+    assert height_from_trunk(short) == pytest.approx(1.50)

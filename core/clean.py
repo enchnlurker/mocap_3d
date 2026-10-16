@@ -413,7 +413,7 @@ def clean_arrays(cap: dict, depth: dict | None = None, cfg: CleanConfig | None =
         bone_names=np.array(BONE_NAMES), bone_pairs=BONE_PAIRS, bone_lengths=bone_lengths_from_groups(glen),
         floor_R=R, floor_offset=float(offset or 0.0), floor_source=floor_source, floor_normal_cam=n_cam,
         vertical_source=vertical, height_m=height,
-        dropped=dropped, filled=filled, swapped=swapped, occluded=occluded, presence=pres,
+        dropped=dropped, filled=filled, swapped=swapped, occluded=occluded, presence=pres, visibility=vis,
         inferred=inferred, tracked=tracked, activity=activity,
         uv_2d=lm2 / np.array([W, H]), width=int(W), height=int(H),
         m_per_px=m_per_px, focal_px=focal, root_joint=root_joint, has_feet=has_feet,

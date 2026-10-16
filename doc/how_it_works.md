@@ -57,7 +57,7 @@ Frames where MediaPipe finds nobody are skipped by 1c and 1d.
 
 Every threshold lives in `CleanConfig`; `configs/<clip>/clean.json` overrides any of them for one clip. Each run writes `clean_summary.json` (counts, the depth reference, torso lean stats, the config used). The torso's lean toward the camera is compared with Depth Pro's torso surface; `--lean-fix` rotates the upper body to match, off by default because at ~3 m the difference is inside Depth Pro's error.
 
-**2b: proportions.** Body height comes from torso length ÷ 0.288. Every bone is set to a standard fraction of that height, left equal to right. Widths, head and foot use MediaPipe's landmark spacing (hips 0.40 × trunk, shoulders 0.64 × trunk), which sits near the joints rather than at the body's outer edges. The skeleton is then rebuilt outward from the pelvis, keeping every bone's direction. Lengths become realistic, but MediaPipe's directions (including its depth errors) stay. 2b is the start point and the reference pose for 2c.
+**2b: proportions.** Body height comes from torso length ÷ 0.288, clamped to 1.50–1.95 m. The head may tip at most 20° off the spine (MediaPipe's depth error tips it too far). Every bone is set to a standard fraction of that height, left equal to right. Widths, head and foot use MediaPipe's landmark spacing (hips 0.40 × trunk, shoulders 0.64 × trunk), which sits near the joints rather than at the body's outer edges. The skeleton is then rebuilt outward from the pelvis, keeping every bone's direction. Lengths become realistic, but MediaPipe's directions (including its depth errors) stay. 2b is the start point and the reference pose for 2c.
 
 **2c: the fit (`fit2d.py`)**
 
@@ -77,16 +77,16 @@ That's roughly 15,000 numbers for a 300-frame clip.
 
 | Term | What it says | Strength |
 |---|---|---|
-| 2D | projected joints sit on MediaPipe's 2D points | main term; about 7 px of noise expected; hidden joints count about ⅓ |
+| 2D | projected joints sit on MediaPipe's 2D points | main term; noise 1% of the image's shorter side (11 px at 1080p); each point weighted by MediaPipe's visibility (0.2–1) |
 | Depth (visible) | a joint's depth relative to the other visible joints in the frame matches the depth map | about 3 cm of noise expected; relative, so Depth Pro's absolute scale doesn't matter |
 | Depth (covered) | a joint behind a hand, another limb or the lap is at least as far as that surface | one-sided |
 | Depth anchor | the gap between the fit and the depth map stays constant over the clip | stops the body drifting toward or away from the camera |
-| Prior | bone directions stay near 2b's | weak for captured bones, strong for inferred legs |
+| Prior | bone directions stay near 2b's | quadratic; σ 1.0 for limbs, 2.0 for the torso, strong for inferred legs |
 | Lean | the torso's toward/away tilt stays near 2b's | about 6° of slack |
 | Facing | the hip and shoulder axes stay near 2b's, so the body doesn't spin to fake a narrower width | about 9° of slack |
 | Lengths | each bone length stays near 2b's | about 12% of slack |
 | Widths | shoulder and hip width = the widest on-screen span (95th percentile, at the fit's own distance), if the person faced the camera at some point (span ≥ 0.75 of 2b's width); otherwise 2b's ratio width | about 4% of slack; stops the solver faking a body turn to get the projected width right |
-| Smoothness | joint acceleration stays low; the pelvis's camera distance even more so | keeps motion clean |
+| Smoothness | joint acceleration stays low; the pelvis's camera distance counts twice | quadratic, σ 0.012 m/frame²: about a walking wrist's real acceleration, so a jump costs a lot but real motion doesn't |
 | Knee | knees don't bend forward | only when legs are captured |
 | Legs apart | knees and ankles stay at least 5 cm apart along the hip axis, so legs don't cross | only when both legs are captured |
 | Twist | hips and shoulders turn against each other by at most 30° | one-sided |
@@ -109,8 +109,11 @@ The optimizer is L-BFGS, a gradient method that handles thousands of unknowns, r
 Which depth readings count as "covered" (at least this far, only):
 
 - a joint whose pixel lies behind a nearer limb (a ~6 cm thick tube) or behind the torso (the shoulder–hip quad), and the farther of a left/right pair that overlaps on screen. In a side view that is the far hip, far shoulder and far arm, which MediaPipe still marks visible;
+- a hip (and the pelvis) whose thigh points at the camera: seated facing it, the hip pixel shows the lap;
 - a joint within 12 cm of a hand centre (wrist plus finger points): the reading may be the hand or what it holds (a cup, a bag, a phone), which the person mask may not cover;
 - the nearer end of an impossible bone: a bone of length L whose ends are some span apart on screen can only reach √((1.15 L)² − span²) + 8 cm toward or away from the camera, so when its two readings differ by more, one is wrong.
+
+Every reading is skin, so a per-joint skin depth is added first (hips 8 cm, spine 10, knees and shoulders 5, ankles 4, elbows 3.5, head 3, wrists 2.5). Relative depth cancels a common offset but not these differences; without them the hips get pulled toward the camera relative to the head and wrists, tilting the pelvis and torso.
 
 The check runs on the rigid 2b pose, and again on the fitted pose before a second free fit. Depth exists every 4th frame; the frames between get linearly interpolated readings, visible only if both samples were, and covered if either was (a limb that covered a joint at one sample may still cover it a few frames later). The interpolated rows share the samples' total weight, so they add no new evidence.
 
@@ -137,9 +140,9 @@ The remaining errors are where all three sources are weak: for example a wrist h
 
 **3A retarget (`retarget.py`).** Each frame, mink IK pulls each site toward its 2c joint:
 
-- **Weights:** the pelvis is strongest (50), so the legs reach and the body doesn't move. Ends (head, wrists, ankles, toes) are medium. Knees, elbows and heels are low: they only hint at the bend (the foot box is rigid; the toe sets it). Inferred joints get ×0.1.
+- **Weights:** the pelvis is strongest (50), so the legs reach and the body doesn't move. Hips, shoulders, neck and spine 4; ends (head, wrists, ankles, toes) 3. Knees and elbows are low (1): they only hint at the bend. Heels 0.3: the foot box is rigid and the toe sets it. Inferred joints get ×0.1. 40 iterations per frame.
 - **Hard limits:** joint ranges, and the four sole corners of each foot box stay at or above z = 0. A small pull toward the previous frame keeps motion continuous.
-- **Fixes for specific failures:** a chest orientation target stops the two 3-hinge spine joints winding against each other (only while within 60° of the pelvis); a weak neutral pull on ankle roll, hip twist and spine side-bend/twist, which the targets barely see; a 360°/s speed limit on twist and ankle hinges, which could flip from limit to limit while a limb was straight; and an unstick: an elbow or knee stuck straight while its target bends starts the frame at the target's bend, held there for half the frame's iterations so the shoulder or hip can turn the bend into the right plane.
+- **Fixes for specific failures:** a chest orientation target stops the two 3-hinge spine joints winding against each other (only while within 60° of the pelvis); a neutral pull (0.3) on ankle roll, hip twist and spine side-bend/twist, which the targets barely see; a 360°/s speed limit on twist and ankle hinges, which could flip from limit to limit while a limb was straight; a bend pull: an elbow or knee is one hinge, so its angle is fixed by its three 2c points whatever way the limb faces, and a steady pull toward that angle stops it collapsing straight; and an unstick: an elbow or knee stuck straight while its target bends starts the frame at the target's bend, held there for half the frame's iterations so the shoulder or hip can turn the bend into the right plane.
 
 **Playback (`playback.py`)** needs no physics: it sets the joint angles each frame and renders an mp4 or opens the MuJoCo viewer, with captured targets as green spheres and inferred ones orange. It also exports per-frame body shapes for Blender and 3A2.
 

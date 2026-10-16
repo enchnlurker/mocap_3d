@@ -14,113 +14,113 @@
   <worldbody>
     <light name="sun" pos="0 0 4" dir="0.3 0.3 -1" directional="true"/>
     <geom name="floor" type="plane" size="0 0 0.05" material="grid" contype="0" conaffinity="1"/>
-    <body name="pelvis" pos="0 0 0.8435">
+    <body name="pelvis" pos="0 0 0.8299">
       <freejoint name="root"/>
-      <geom name="pelvis" type="ellipsoid" pos="0 -0.008 0.025341" size="0.1604 0.1047 0.1183" mass="7.014"/>
+      <geom name="pelvis" type="ellipsoid" pos="0 -0.008 0.024817" size="0.1565 0.1026 0.1158" mass="6.727"/>
       <site name="pelvis" pos="0 0 0" size="0.015"/>
-      <site name="l_hip" pos="-0.1013 0 0" size="0.015"/>
-      <site name="r_hip" pos="0.1013 0 0" size="0.015"/>
+      <site name="l_hip" pos="-0.0986 0 0" size="0.015"/>
+      <site name="r_hip" pos="0.0986 0 0" size="0.015"/>
       <body name="abdomen" pos="0 0 0">
         <joint name="abdomen_flex" type="hinge" axis="-1 0 0" range="-25 45"/>
         <joint name="abdomen_side" type="hinge" axis="0 1 0" range="-25 25"/>
         <joint name="abdomen_twist" type="hinge" axis="0 0 1" range="-30 30"/>
-        <geom name="abdomen" type="ellipsoid" pos="0 0 0.15246" size="0.1352 0.098 0.1802" mass="10.25"/>
-        <site name="spine" pos="0 0 0.2772" size="0.015"/>
-        <body name="chest" pos="0 0 0.2772">
+        <geom name="abdomen" type="ellipsoid" pos="0 0 0.14977" size="0.1324 0.096 0.177" mass="9.834"/>
+        <site name="spine" pos="0 0 0.2723" size="0.015"/>
+        <body name="chest" pos="0 0 0.2723">
           <joint name="chest_flex" type="hinge" axis="-1 0 0" range="-25 45"/>
           <joint name="chest_side" type="hinge" axis="0 1 0" range="-25 25"/>
           <joint name="chest_twist" type="hinge" axis="0 0 1" range="-30 30"/>
-          <geom name="chest" type="ellipsoid" pos="0 0.005 0.11642" size="0.1554 0.1081 0.1802" mass="10.02"/>
-          <geom name="shoulder_girdle" type="capsule" fromto="-0.12978 -0.008 0.25502 0.12978 -0.008 0.25502" size="0.0608" mass="0"/>
+          <geom name="chest" type="ellipsoid" pos="0 0.005 0.11437" size="0.1522 0.1059 0.177" mass="9.611"/>
+          <geom name="shoulder_girdle" type="capsule" fromto="-0.12987 -0.008 0.25052 0.12987 -0.008 0.25052" size="0.0596" mass="0"/>
           <site name="chest" pos="0 0 0" size="0.015"/>
-          <site name="neck" pos="0 0 0.2772" size="0.015"/>
-          <site name="l_shoulder" pos="-0.1442 0 0.2772" size="0.015"/>
-          <site name="r_shoulder" pos="0.1442 0 0.2772" size="0.015"/>
-          <body name="head" pos="0 0 0.2772">
+          <site name="neck" pos="0 0 0.2723" size="0.015"/>
+          <site name="l_shoulder" pos="-0.1443 0 0.2723" size="0.015"/>
+          <site name="r_shoulder" pos="0.1443 0 0.2723" size="0.015"/>
+          <body name="head" pos="0 0 0.2723">
             <joint name="neck_flex" type="hinge" axis="-1 0 0" range="-60 70"/>
             <joint name="neck_side" type="hinge" axis="0 1 0" range="-45 45"/>
             <joint name="neck_twist" type="hinge" axis="0 0 1" range="-80 80"/>
-            <geom name="neck" type="capsule" fromto="0 0 -0.050682 0 0.008 0.13185" size="0.0541" mass="0"/>
-            <geom name="head" type="ellipsoid" pos="0 0.0147 0.2099" size="0.0845 0.098 0.1115" mass="4.358"/>
-            <site name="head" pos="0 0 0.2099" size="0.015"/>
+            <geom name="neck" type="capsule" fromto="0 0 -0.049635 0 0.008 0.13226" size="0.0529" mass="0"/>
+            <geom name="head" type="ellipsoid" pos="0 0.0144 0.2087" size="0.0827 0.096 0.1092" mass="4.179"/>
+            <site name="head" pos="0 0 0.2087" size="0.015"/>
           </body>
-          <body name="l_upper_arm" pos="-0.1442 0 0.2772">
+          <body name="l_upper_arm" pos="-0.1443 0 0.2723">
             <joint name="l_shoulder_flex" type="hinge" axis="1 0 0" range="-60 180"/>
             <joint name="l_shoulder_abd" type="hinge" axis="0 1 0" range="-30 180"/>
             <joint name="l_shoulder_rot" type="hinge" axis="0 0 -1" range="-90 90"/>
-            <geom name="l_upper_arm" type="capsule" fromto="0 0 0 0 0 -0.295" size="0.0405" mass="1.702"/>
-            <geom name="l_deltoid" type="ellipsoid" pos="-0.00861 0 -0.0507" size="0.0574 0.0608 0.0845" mass="0"/>
-            <site name="l_elbow" pos="0 0 -0.295" size="0.015"/>
-            <body name="l_forearm" pos="0 0 -0.295">
+            <geom name="l_upper_arm" type="capsule" fromto="0 0 0 0 0 -0.2946" size="0.0397" mass="1.632"/>
+            <geom name="l_deltoid" type="ellipsoid" pos="-0.008445 0 -0.04962" size="0.0563 0.0596 0.0827" mass="0"/>
+            <site name="l_elbow" pos="0 0 -0.2946" size="0.015"/>
+            <body name="l_forearm" pos="0 0 -0.2946">
               <joint name="l_elbow" type="hinge" axis="1 0 0" range="0 150"/>
-              <geom name="l_forearm" type="capsule" fromto="0 0 0 0 0 -0.267" size="0.0321" mass="1.4"/>
-              <geom name="l_hand" type="ellipsoid" pos="0 0 -0.34305" size="0.022 0.0456 0.0845" mass="0"/>
-              <site name="l_wrist" pos="0 0 -0.267" size="0.015"/>
+              <geom name="l_forearm" type="capsule" fromto="0 0 0 0 0 -0.2561" size="0.0314" mass="1.343"/>
+              <geom name="l_hand" type="ellipsoid" pos="0 0 -0.33053" size="0.0215 0.0447 0.0827" mass="0"/>
+              <site name="l_wrist" pos="0 0 -0.2561" size="0.015"/>
             </body>
           </body>
-          <body name="r_upper_arm" pos="0.1442 0 0.2772">
+          <body name="r_upper_arm" pos="0.1443 0 0.2723">
             <joint name="r_shoulder_flex" type="hinge" axis="1 0 0" range="-60 180"/>
             <joint name="r_shoulder_abd" type="hinge" axis="-0 -1 -0" range="-30 180"/>
             <joint name="r_shoulder_rot" type="hinge" axis="-0 -0 1" range="-90 90"/>
-            <geom name="r_upper_arm" type="capsule" fromto="0 0 0 0 0 -0.295" size="0.0405" mass="1.702"/>
-            <geom name="r_deltoid" type="ellipsoid" pos="0.00861 0 -0.0507" size="0.0574 0.0608 0.0845" mass="0"/>
-            <site name="r_elbow" pos="0 0 -0.295" size="0.015"/>
-            <body name="r_forearm" pos="0 0 -0.295">
+            <geom name="r_upper_arm" type="capsule" fromto="0 0 0 0 0 -0.2946" size="0.0397" mass="1.632"/>
+            <geom name="r_deltoid" type="ellipsoid" pos="0.008445 0 -0.04962" size="0.0563 0.0596 0.0827" mass="0"/>
+            <site name="r_elbow" pos="0 0 -0.2946" size="0.015"/>
+            <body name="r_forearm" pos="0 0 -0.2946">
               <joint name="r_elbow" type="hinge" axis="1 0 0" range="0 150"/>
-              <geom name="r_forearm" type="capsule" fromto="0 0 0 0 0 -0.267" size="0.0321" mass="1.4"/>
-              <geom name="r_hand" type="ellipsoid" pos="0 0 -0.34305" size="0.022 0.0456 0.0845" mass="0"/>
-              <site name="r_wrist" pos="0 0 -0.267" size="0.015"/>
+              <geom name="r_forearm" type="capsule" fromto="0 0 0 0 0 -0.2561" size="0.0314" mass="1.343"/>
+              <geom name="r_hand" type="ellipsoid" pos="0 0 -0.33053" size="0.0215 0.0447 0.0827" mass="0"/>
+              <site name="r_wrist" pos="0 0 -0.2561" size="0.015"/>
             </body>
           </body>
         </body>
       </body>
-      <body name="l_thigh" pos="-0.1013 0 0">
+      <body name="l_thigh" pos="-0.0986 0 0">
         <joint name="l_hip_flex" type="hinge" axis="1 0 0" range="-30 125"/>
         <joint name="l_hip_abd" type="hinge" axis="0 1 0" range="-30 45"/>
         <joint name="l_hip_rot" type="hinge" axis="0 0 -1" range="-45 45"/>
-        <geom name="l_thigh" type="capsule" fromto="0 0 0 0 0 -0.3819" size="0.0574" mass="8.891"/>
-        <geom name="l_thigh_muscle" type="ellipsoid" pos="0 0.004 -0.15276" size="0.0777 0.0811 0.1604" mass="0"/>
-        <site name="l_knee" pos="0 0 -0.3819" size="0.015"/>
-        <body name="l_shin" pos="0 0 -0.3819">
+        <geom name="l_thigh" type="capsule" fromto="0 0 0 0 0 -0.3809" size="0.0563" mass="8.527"/>
+        <geom name="l_thigh_muscle" type="ellipsoid" pos="0 0.004 -0.15236" size="0.0761 0.0794 0.16" mass="0"/>
+        <site name="l_knee" pos="0 0 -0.3809" size="0.015"/>
+        <body name="l_shin" pos="0 0 -0.3809">
           <joint name="l_knee" type="hinge" axis="-1 0 0" range="0 150"/>
-          <geom name="l_shin" type="capsule" fromto="0 0 0 0 0 -0.3957" size="0.0405" mass="2.719"/>
-          <geom name="l_calf" type="ellipsoid" pos="0 -0.01435 -0.13058" size="0.0507 0.0574 0.1266" mass="0"/>
-          <site name="l_ankle" pos="0 0 -0.3957" size="0.015"/>
-          <body name="l_foot" pos="0 0 -0.3957">
+          <geom name="l_shin" type="capsule" fromto="0 0 0 0 0 -0.3845" size="0.0397" mass="2.608"/>
+          <geom name="l_calf" type="ellipsoid" pos="0 -0.014075 -0.12688" size="0.0496 0.0563 0.123" mass="0"/>
+          <site name="l_ankle" pos="0 0 -0.3845" size="0.015"/>
+          <body name="l_foot" pos="0 0 -0.3845">
             <joint name="l_ankle_flex" type="hinge" axis="1 0 0" range="-50 30"/>
             <joint name="l_ankle_roll" type="hinge" axis="0 1 0" range="-30 30"/>
-            <geom name="l_foot" type="box" pos="0 0.060896 -0.03295" size="0.0439 0.11347 0.03295" mass="0.8602"/>
-            <site name="l_heel" pos="0 -0.052571 -0.0659" size="0.015"/>
-            <site name="l_toe" pos="0 0.17436 -0.0659" size="0.015"/>
-            <site name="l_sole0" pos="-0.0439 -0.052571 -0.0659" size="0.015"/>
-            <site name="l_sole1" pos="0.0439 -0.052571 -0.0659" size="0.015"/>
-            <site name="l_sole2" pos="0.0439 0.17436 -0.0659" size="0.015"/>
-            <site name="l_sole3" pos="-0.0439 0.17436 -0.0659" size="0.015"/>
+            <geom name="l_foot" type="box" pos="0 0.061367 -0.03225" size="0.043 0.11053 0.03225" mass="0.825"/>
+            <site name="l_heel" pos="0 -0.049163 -0.0645" size="0.015"/>
+            <site name="l_toe" pos="0 0.1719 -0.0645" size="0.015"/>
+            <site name="l_sole0" pos="-0.043 -0.049163 -0.0645" size="0.015"/>
+            <site name="l_sole1" pos="0.043 -0.049163 -0.0645" size="0.015"/>
+            <site name="l_sole2" pos="0.043 0.1719 -0.0645" size="0.015"/>
+            <site name="l_sole3" pos="-0.043 0.1719 -0.0645" size="0.015"/>
           </body>
         </body>
       </body>
-      <body name="r_thigh" pos="0.1013 0 0">
+      <body name="r_thigh" pos="0.0986 0 0">
         <joint name="r_hip_flex" type="hinge" axis="1 0 0" range="-30 125"/>
         <joint name="r_hip_abd" type="hinge" axis="-0 -1 -0" range="-30 45"/>
         <joint name="r_hip_rot" type="hinge" axis="-0 -0 1" range="-45 45"/>
-        <geom name="r_thigh" type="capsule" fromto="0 0 0 0 0 -0.3819" size="0.0574" mass="8.891"/>
-        <geom name="r_thigh_muscle" type="ellipsoid" pos="0 0.004 -0.15276" size="0.0777 0.0811 0.1604" mass="0"/>
-        <site name="r_knee" pos="0 0 -0.3819" size="0.015"/>
-        <body name="r_shin" pos="0 0 -0.3819">
+        <geom name="r_thigh" type="capsule" fromto="0 0 0 0 0 -0.3809" size="0.0563" mass="8.527"/>
+        <geom name="r_thigh_muscle" type="ellipsoid" pos="0 0.004 -0.15236" size="0.0761 0.0794 0.16" mass="0"/>
+        <site name="r_knee" pos="0 0 -0.3809" size="0.015"/>
+        <body name="r_shin" pos="0 0 -0.3809">
           <joint name="r_knee" type="hinge" axis="-1 0 0" range="0 150"/>
-          <geom name="r_shin" type="capsule" fromto="0 0 0 0 0 -0.3957" size="0.0405" mass="2.719"/>
-          <geom name="r_calf" type="ellipsoid" pos="0 -0.01435 -0.13058" size="0.0507 0.0574 0.1266" mass="0"/>
-          <site name="r_ankle" pos="0 0 -0.3957" size="0.015"/>
-          <body name="r_foot" pos="0 0 -0.3957">
+          <geom name="r_shin" type="capsule" fromto="0 0 0 0 0 -0.3845" size="0.0397" mass="2.608"/>
+          <geom name="r_calf" type="ellipsoid" pos="0 -0.014075 -0.12688" size="0.0496 0.0563 0.123" mass="0"/>
+          <site name="r_ankle" pos="0 0 -0.3845" size="0.015"/>
+          <body name="r_foot" pos="0 0 -0.3845">
             <joint name="r_ankle_flex" type="hinge" axis="1 0 0" range="-50 30"/>
             <joint name="r_ankle_roll" type="hinge" axis="-0 -1 -0" range="-30 30"/>
-            <geom name="r_foot" type="box" pos="0 0.060896 -0.03295" size="0.0439 0.11347 0.03295" mass="0.8602"/>
-            <site name="r_heel" pos="0 -0.052571 -0.0659" size="0.015"/>
-            <site name="r_toe" pos="0 0.17436 -0.0659" size="0.015"/>
-            <site name="r_sole0" pos="-0.0439 -0.052571 -0.0659" size="0.015"/>
-            <site name="r_sole1" pos="0.0439 -0.052571 -0.0659" size="0.015"/>
-            <site name="r_sole2" pos="0.0439 0.17436 -0.0659" size="0.015"/>
-            <site name="r_sole3" pos="-0.0439 0.17436 -0.0659" size="0.015"/>
+            <geom name="r_foot" type="box" pos="0 0.061367 -0.03225" size="0.043 0.11053 0.03225" mass="0.825"/>
+            <site name="r_heel" pos="0 -0.049163 -0.0645" size="0.015"/>
+            <site name="r_toe" pos="0 0.1719 -0.0645" size="0.015"/>
+            <site name="r_sole0" pos="-0.043 -0.049163 -0.0645" size="0.015"/>
+            <site name="r_sole1" pos="0.043 -0.049163 -0.0645" size="0.015"/>
+            <site name="r_sole2" pos="0.043 0.1719 -0.0645" size="0.015"/>
+            <site name="r_sole3" pos="-0.043 0.1719 -0.0645" size="0.015"/>
           </body>
         </body>
       </body>

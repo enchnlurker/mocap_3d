@@ -15,6 +15,10 @@ Each frame, mink pulls each body site toward its 2c joint (positions_fit2d):
             twist, which the targets barely see.
             Speed limit (360 deg/s) on the twist and ankle hinges, which can
             otherwise flip from limit to limit while a limb is straight.
+            Bend: an elbow or knee is one hinge, so its angle is fixed by its three
+            2c points whatever way the limb faces; a steady pull toward that
+            angle keeps it from collapsing straight when the target's bend
+            plane is hard to reach.
             Unstick: an elbow or knee stuck straight while its target bends
             starts the frame at the target's bend, held there for the first
             half of the frame's iterations so the shoulder / hip can turn the
@@ -37,25 +41,28 @@ from core.bodygen import BODIES, TWIST_JOINTS
 from core.skeleton import J, JOINT_NAMES
 
 W_PELVIS = 50.0
-W_ENDS = 10.0       # head, wrists, ankles, toes
+W_ENDS = 3.0        # head, wrists, ankles, toes
 W_MID = 4.0         # hips, shoulders, neck, spine
-W_HINT = 1.0        # knees, elbows: bend direction only; heels (the foot box is rigid, the toe sets it)
+W_HINT = 1.0        # knees, elbows: bend direction only
+W_HEEL = 0.3        # the foot box is rigid and 2c's heel doesn't fit it; the toe sets the foot
 INFERRED_FACTOR = 0.1
 W_PELVIS_ORIENT = 5.0
 W_CHEST_ORIENT = 2.0
 CHEST_MAX_DEG = 60.0          # chest target only while within this of the pelvis
-W_NEUTRAL = 0.05              # on twist / roll / side-bend hinges
+W_NEUTRAL = 0.3               # on twist / roll / side-bend hinges
 W_PREVIOUS = 0.02             # pull toward the previous frame, all hinges
 W_HOLD = 10.0                 # unstick: hold the bend while the rest of the limb turns
+W_BEND = 1.0                  # elbow / knee pulled to the bend its three 2c points measure
 SPEED_LIMIT_DEG_S = 360.0     # twist and ankle hinges
 STRAIGHT_DEG = 5.0            # unstick: hinge this straight ...
 TARGET_BEND_DEG = 20.0        # ... while the target bends at least this much
-POP_DEG = 30.0                # per-frame hinge jump reported as a pop (at 30 fps)
-ITERS_FIRST, ITERS = 150, 12
+POP_DEG = 15.0                # per-frame hinge jump reported as a pop (at 30 fps)
+ITERS_FIRST, ITERS = 150, 40
 SOLVER = "daqp"
 
 ENDS = ["head", "l_wrist", "r_wrist", "l_ankle", "r_ankle", "l_toe", "r_toe"]
-HINTS = ["l_knee", "r_knee", "l_elbow", "r_elbow", "l_heel", "r_heel"]
+HINTS = ["l_knee", "r_knee", "l_elbow", "r_elbow"]
+HEELS = ["l_heel", "r_heel"]
 HINGE_PAIRS = {"l_knee": ("l_hip", "l_knee", "l_ankle"), "r_knee": ("r_hip", "r_knee", "r_ankle"),
                "l_elbow": ("l_shoulder", "l_elbow", "l_wrist"), "r_elbow": ("r_shoulder", "r_elbow", "r_wrist")}
 NEUTRAL = ["abdomen_side", "abdomen_twist", "chest_side", "chest_twist", "l_hip_rot", "r_hip_rot",
@@ -68,6 +75,7 @@ def site_weights(inferred: np.ndarray) -> np.ndarray:
     w[J["pelvis"]] = W_PELVIS
     w[[J[n] for n in ENDS]] = W_ENDS
     w[[J[n] for n in HINTS]] = W_HINT
+    w[[J[n] for n in HEELS]] = W_HEEL
     return w[None] * np.where(inferred, INFERRED_FACTOR, 1.0)
 
 
@@ -142,6 +150,11 @@ def retarget(xml_path, P: np.ndarray, inferred: np.ndarray, fps: float, verbose:
     neutral.set_target(model.qpos0)
     previous = mink.PostureTask(model, cost=W_PREVIOUS)
     hold = mink.PostureTask(model, cost=np.zeros(model.nv))
+    bend_task = mink.PostureTask(model, cost=np.zeros(model.nv))
+    bend_cost = np.zeros(model.nv)
+    for n in HINGE_PAIRS:
+        bend_cost[dof(n)] = W_BEND
+    bend_task.set_cost(bend_cost)
     fast = [n for n in hinges if any(n.endswith(t) for t in TWIST_JOINTS) or "ankle" in n]
     sole = [model.site(i).name for i in range(model.nsite) if "_sole" in model.site(i).name]
     floor = FloorLimit(model, sole)
@@ -179,6 +192,11 @@ def retarget(xml_path, P: np.ndarray, inferred: np.ndarray, fps: float, verbose:
                 unstuck[t] = True
         cfg.update(q)
         previous.set_target(q)
+        qb = q.copy()
+        for n, (a, b, c) in HINGE_PAIRS.items():
+            lo, hi = model.jnt_range[jid(n)]
+            qb[qadr(n)] = np.clip(np.radians(target_bend(P[t], a, b, c)), lo, hi)
+        bend_task.set_target(qb)
         hold.set_cost(hold_cost)
         hold.set_target(q)
         first = t == 0
@@ -188,7 +206,7 @@ def retarget(xml_path, P: np.ndarray, inferred: np.ndarray, fps: float, verbose:
         if not first:
             limits.append(mink.VelocityLimit(model, {n: np.radians(SPEED_LIMIT_DEG_S) for n in fast}))
         for it in range(n_it):
-            tasks = [*sites, pelvis_o, chest_o, neutral, previous] + ([hold] if it < n_it // 2 else [])
+            tasks = [*sites, pelvis_o, chest_o, neutral, previous, bend_task] + ([hold] if it < n_it // 2 else [])
             try:
                 v = mink.solve_ik(cfg, tasks, step, SOLVER, damping=1e-3, limits=limits)
             except mink.exceptions.NoSolutionFound:

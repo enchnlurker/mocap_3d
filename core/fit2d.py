@@ -16,21 +16,24 @@ shoulder/hip/spine pairs are tied by construction.
 Camera: pinhole at the origin, Depth Pro's focal length, principal point at
 the image centre: pixel = focal * (x, y) / z + centre.
 
-Cost terms (soft-L1 each, so one bad reading can't drag the whole body):
-    2D            projected joints on MediaPipe 2D        ~7 px; hidden joints count 1/3
+Cost terms (soft-L1 unless noted, so one bad reading can't drag the whole body):
+    2D            projected joints on MediaPipe 2D        1 % of the shorter side; weight = visibility
     depth visible joint depth relative to the frame's     ~3 cm; relative, so Depth Pro's
                   other visible joints matches the map    absolute scale doesn't matter
+    depth visible readings are skin: a per-joint skin depth is added first
     depth covered behind a limb / the torso / the lap, near a  one-sided: at least that far
                   hand (or what it holds), nearer end of an
                   impossible bone, or hidden
     depth anchor  fit-vs-map gap constant over the clip   stops drift toward/away
-    prior         bone directions near 2b's               weak captured, strong inferred
+    prior         bone directions near 2b's               quadratic; sigma 1.0 limbs, 2.0 torso,
+                                                            strong inferred
     lean          torso toward/away tilt near 2b's        ~6 deg
     facing        hip/shoulder axes near 2b's             ~9 deg
     lengths       each group length near 2b's             ~12 % slack
     widths        shoulder / hip width = widest on-screen  ~4 %; only if the person faced
                   span at the fit's distance (p95)         the camera at some point
-    smoothness    low joint acceleration; pelvis camera distance even more so
+    smoothness    low joint acceleration; pelvis camera    quadratic, 0.012 m/frame^2
+                  distance counts twice
     knee          knees don't bend forward                only when legs are captured
     legs apart    knees/ankles keep >= 5 cm apart along   only when both legs are captured
                   the hip axis (legs don't cross)
@@ -79,22 +82,25 @@ from scipy.optimize import minimize
 
 from core import proportions, schema
 from core.filters import fill_gaps, hold_edges, lowpass
-from core.skeleton import (BONE_PAIRS, D, DIR_FROM, DIR_TO, GROUPS, J, LEFT_RIGHT, LEGS, N_JOINTS,
+from core.skeleton import (BONE_PAIRS, D, DIR_FROM, DIR_TO, GROUPS, J, JOINT_NAMES, LEFT_RIGHT, LEGS, N_JOINTS,
                            bone_lengths_from_groups, build_positions, extract_dirs,
                            group_lengths, map_mediapipe, normalize)
 
-SIGMA_2D_PX = 7.0
-HIDDEN_2D_WEIGHT = 1 / 3
+SIGMA_2D_FRAC = 0.01            # 2D noise: 1 % of the image's shorter side (11 px at 1080p, portrait too)
+MIN_2D_WEIGHT = 0.2              # 2D weight = MediaPipe visibility, clipped to [0.2, 1]
+HIDDEN_2D_WEIGHT = 1 / 3         # older clean files without visibility: occluded points
 SIGMA_DEPTH_M = 0.03
 SIGMA_ANCHOR_M = 0.05
-SIGMA_PRIOR_CAPTURED = 1 / 0.5  # radians-ish on unit vectors: weight 0.5
-SIGMA_PRIOR_NO_DEPTH = 1 / 4.0  # without depth the prior is the only depth evidence
+SIGMA_PRIOR_LIMB = 1.0           # 2b direction prior on captured limb bones (quadratic; weight 1)
+SIGMA_PRIOR_TORSO = 2.0          # spine, head, shoulder / hip axes: looser (weight 0.25)
+SIGMA_PRIOR_NO_DEPTH = 0.25      # without depth the prior is the only depth evidence
 SIGMA_PRIOR_INFERRED = 0.05
 SIGMA_LEAN = 0.1
 SIGMA_FACING = 0.15              # hip/shoulder axes near 2b's (~9 deg): which way the body faces
 LENGTH_SLACK = 0.12
-SIGMA_ACC_M = 0.015              # per frame^2 at 30 fps
-PELVIS_Z_ACC_FACTOR = 0.25
+SIGMA_ACC_M = 0.012              # per frame^2 at 30 fps, quadratic: a big jump costs a lot; about a
+                                 # walking wrist's / ankle's real acceleration, so real motion isn't smoothed away
+PELVIS_Z_ACC_FACTOR = 1.0
 SIGMA_KNEE = 0.05
 TWIST_MAX_DEG = 30.0            # hips vs shoulders about the spine
 SIGMA_TWIST_DEG = 5.0
@@ -112,6 +118,15 @@ STATIC_PX_PER_FRAME = 0.5
 BG_BANDS = 3                     # horizontal background bands for the camera check
 COVER_MARGIN_M = 0.05
 LIMB_RADIUS_M = 0.06
+# A depth reading is skin, not the joint centre: the joint is this much farther.
+# Relative depth cancels a common offset but not these differences (hips vs wrists).
+SKIN_DEPTH_M = {"pelvis": 0.08, "spine": 0.10, "neck": 0.05, "head": 0.03,
+                "l_hip": 0.08, "r_hip": 0.08, "l_knee": 0.05, "r_knee": 0.05,
+                "l_ankle": 0.04, "r_ankle": 0.04, "l_heel": 0.03, "r_heel": 0.03,
+                "l_toe": 0.02, "r_toe": 0.02, "l_shoulder": 0.05, "r_shoulder": 0.05,
+                "l_elbow": 0.035, "r_elbow": 0.035, "l_wrist": 0.025, "r_wrist": 0.025}
+SKIN_VEC = np.array([SKIN_DEPTH_M[n] for n in JOINT_NAMES])
+LAP_TOWARD = 0.5                 # thigh's share pointing at the camera (30 deg) that puts the lap over the hip
 HAND_RADIUS_M = 0.12             # joints this close to a hand centre: depth is a lower bound
 IMPOSSIBLE_SLACK = 1.15          # bone length slack for the reachable depth gap
 IMPOSSIBLE_MARGIN_M = 0.08
@@ -136,7 +151,7 @@ T_ = torch.float64
 @dataclass
 class FitInputs:
     uv: np.ndarray            # [T,20,2] px, NaN where missing
-    w2d: np.ndarray           # [T,20] 1 visible, 1/3 occluded, 0 none
+    w2d: np.ndarray           # [T,20] 2D weight: visibility in [0.2, 1], 0 none
     focal: float
     center: np.ndarray        # [2]
     pos_2b: np.ndarray        # [T,20,3] world
@@ -154,6 +169,12 @@ class FitInputs:
     patch_px: float = 12.0
     hand_uv: np.ndarray | None = None      # [T,2,2] px, left/right hand centre (wrist + fingers)
     frame_ok: np.ndarray | None = None     # [T] person detected (no depth evidence otherwise)
+    vis2d: np.ndarray | None = None        # [T,20] seen in 2D (not occluded, not inferred); default w2d == 1
+    sigma_2d: float = 7.0                  # px
+
+    def __post_init__(self):
+        if self.vis2d is None:
+            self.vis2d = np.asarray(self.w2d) >= 1.0
 
 
 # ---------------------------------------------------------------- torch pieces
@@ -213,7 +234,7 @@ class Problem:
     def terms(self, P):
         """2D, depth (visible, covered, anchor) and smoothness on camera joints [T,20,3]."""
         out = {}
-        r = ((self.project(P) - self.uv) / SIGMA_2D_PX).pow(2).sum(-1)
+        r = ((self.project(P) - self.uv) / self.x.sigma_2d).pow(2).sum(-1)
         out["2d"] = (self.w2d * soft_l1(r)).sum()
         if len(self.df) and self.vis_d.sum() > 0:
             zf = P[self.df, :, 2]
@@ -227,9 +248,9 @@ class Problem:
             gap = (mf - ms)[:, 0][has]
             out["anchor"] = soft_l1(((gap - gap.mean()) / SIGMA_ANCHOR_M) ** 2).sum()
         a = P[2:] - 2 * P[1:-1] + P[:-2]
-        out["smooth"] = soft_l1((a / self.sigma_acc).pow(2).sum(-1)).sum()
+        out["smooth"] = (a / self.sigma_acc).pow(2).sum()
         pz = a[:, J["pelvis"], 2] / (self.sigma_acc * PELVIS_Z_ACC_FACTOR)
-        out["smooth"] = out["smooth"] + soft_l1(pz ** 2).sum()
+        out["smooth"] = out["smooth"] + (pz ** 2).sum()
         return out
 
 
@@ -315,8 +336,9 @@ def free_phase(pb: Problem, x: FitInputs, P_rigid: np.ndarray, R_rigid: np.ndarr
     dref = np.einsum("tij,tkj->tki", R_rigid, dirs_2b_world)
     glen_2b = group_lengths(x.pos_2b)
     inf_dir = x.inferred[:, DIR_FROM] | x.inferred[:, DIR_TO]
-    sig_cap = SIGMA_PRIOR_CAPTURED if pb.vis_d.sum() > 0 else SIGMA_PRIOR_NO_DEPTH
-    w_prior = torch.as_tensor(np.where(inf_dir, 1 / SIGMA_PRIOR_INFERRED, 1 / sig_cap), dtype=T_)
+    torso = np.isin(np.arange(len(D)), [D[n] for n in ("spine", "head", "shoulder_axis", "hip_axis")])
+    sig = np.where(torso, SIGMA_PRIOR_TORSO, SIGMA_PRIOR_LIMB)[None] if pb.vis_d.sum() > 0 else SIGMA_PRIOR_NO_DEPTH
+    w_prior = torch.as_tensor(np.where(inf_dir, 1 / SIGMA_PRIOR_INFERRED, 1 / sig), dtype=T_)
     dref_t = torch.as_tensor(dref, dtype=T_)
     lean_ref = torch.asin(dref_t[:, D["spine"], 2].clamp(-ASIN_MAX, ASIN_MAX))
     log_l2b = torch.as_tensor(np.log(glen_2b), dtype=T_)
@@ -336,7 +358,7 @@ def free_phase(pb: Problem, x: FitInputs, P_rigid: np.ndarray, R_rigid: np.ndarr
         d = raw / raw.norm(dim=-1, keepdim=True).clamp(min=1e-9)
         P = build_positions(pel, d, torch.exp(logl))
         terms = pb.terms(P)
-        terms["prior"] = soft_l1(((d - dref_t).pow(2).sum(-1)) * w_prior ** 2).sum()
+        terms["prior"] = ((d - dref_t).pow(2).sum(-1) * w_prior ** 2).sum()
         lean = torch.asin(d[:, D["spine"], 2].clamp(-ASIN_MAX, ASIN_MAX))
         terms["lean"] = soft_l1(((lean - lean_ref) / SIGMA_LEAN) ** 2).sum()
         fa = [D["hip_axis"], D["shoulder_axis"]]
@@ -492,7 +514,11 @@ def prepare(clean: dict, depth: dict | None, dj: dict | None, cap: dict | None =
     uv = clean["uv_2d"] * np.array([W, H])
     occ = clean["occluded"].astype(bool)
     inferred = clean["inferred"].astype(bool)
-    w2d = np.where(occ, HIDDEN_2D_WEIGHT, 1.0) * np.isfinite(uv).all(-1) * ~inferred
+    seen = np.isfinite(uv).all(-1) & ~inferred
+    if "visibility" in clean:
+        w2d = np.clip(clean["visibility"], MIN_2D_WEIGHT, 1.0) * seen
+    else:
+        w2d = np.where(occ, HIDDEN_2D_WEIGHT, 1.0) * seen
     T = len(uv)
 
     focal = np.nan
@@ -510,7 +536,8 @@ def prepare(clean: dict, depth: dict | None, dj: dict | None, cap: dict | None =
                   tracked=clean["tracked"].astype(bool), fps=float(clean["fps"]),
                   init_dist=np.zeros(T), occluded=occ,
                   patch_px=max(8.0, 0.012 * np.hypot(W, H)),
-                  frame_ok=~clean["undetected"].astype(bool) if "undetected" in clean else np.ones(T, bool))
+                  frame_ok=~clean["undetected"].astype(bool) if "undetected" in clean else np.ones(T, bool),
+                  vis2d=seen & ~occ, sigma_2d=SIGMA_2D_FRAC * min(W, H))
     if cap is not None:
         with np.errstate(all="ignore"):
             hands = np.stack([np.nanmean(cap["landmarks_2d"][:, list(ix)], axis=1) for ix in HAND_LANDMARKS], 1)
@@ -518,10 +545,10 @@ def prepare(clean: dict, depth: dict | None, dj: dict | None, cap: dict | None =
 
     if dj is not None:
         x.depth_frames = dj["frames"].astype(int)
-        x.z_surface = map_mediapipe(dj["z_surface"][:, :, None])[..., 0]
+        x.z_surface = map_mediapipe(dj["z_surface"][:, :, None])[..., 0] + SKIN_VEC
         x.on_mask = map_mediapipe(dj["on_mask"][:, :, None].astype(float), "min")[..., 0] > 0.5
         x.in_frame = map_mediapipe(dj["in_frame"][:, :, None].astype(float), "min")[..., 0] > 0.5
-        x.z_fallback = (map_mediapipe(dj["z_fallback"][:, :, None])[..., 0] if "z_fallback" in dj
+        x.z_fallback = (map_mediapipe(dj["z_fallback"][:, :, None])[..., 0] + SKIN_VEC if "z_fallback" in dj
                         else np.full_like(x.z_surface, np.nan))
 
     # initial distance: depth readings on the torso > depth.npz body distance > pinhole size
@@ -544,6 +571,20 @@ def prepare(clean: dict, depth: dict | None, dj: dict | None, cap: dict | None =
     dist, _ = fill_gaps(dist[:, None], ok, None)
     x.init_dist = hold_edges(dist)[:, 0]
     return x
+
+
+def lap_cover(x: FitInputs, P_cam: np.ndarray) -> np.ndarray:
+    """[N,20]: a thigh pointing at the camera (seated, facing it) puts the lap over
+    its hip pixel, so the hip reading is the lap: at least this far. The cover
+    check by other limbs can't see this, since the thigh is attached to the hip."""
+    f = x.depth_frames
+    out = np.zeros((len(f), N_JOINTS), bool)
+    for s in "lr":
+        th = P_cam[f, J[f"{s}_knee"]] - P_cam[f, J[f"{s}_hip"]]
+        lap = -th[:, 2] / np.maximum(np.linalg.norm(th, axis=1), 1e-9) > LAP_TOWARD
+        out[:, J[f"{s}_hip"]] |= lap
+        out[:, J["pelvis"]] |= lap
+    return out
 
 
 def near_hand(x: FitInputs, P_cam: np.ndarray) -> np.ndarray:
@@ -619,11 +660,12 @@ def depth_evidence(x: FitInputs, P_cam: np.ndarray, interpolate: bool = True) ->
     z = np.where(fallback, zfb, x.z_surface)
     frame_ok = x.frame_ok[f] if x.frame_ok is not None else np.ones(len(f), bool)
     finite = np.isfinite(z) & x.in_frame & frame_ok[:, None]
-    cov_seg = covered_by_body(P_cam, f, x.focal, x.center, 0.5 * x.patch_px) | far_of_overlapping_pair(x, P_cam)
+    cov_seg = (covered_by_body(P_cam, f, x.focal, x.center, 0.5 * x.patch_px) | far_of_overlapping_pair(x, P_cam)
+               | lap_cover(x, P_cam))
     hand = near_hand(x, P_cam)
     imp = impossible_depth(x, z, finite & ~cov_seg)
     on = x.on_mask | fallback   # a fallback patch missed the person mask by definition
-    vis = (x.w2d[f] == 1.0) & on & finite & ~cov_seg & ~hand & ~imp
+    vis = x.vis2d[f] & on & finite & ~cov_seg & ~hand & ~imp
     cov = finite & ~vis & (x.occluded[f] | ~on | cov_seg | x.inferred[f] | hand | imp)
     w = np.where(fallback, FALLBACK_WEIGHT, 1.0)
     w_vis, w_cov = np.where(vis, w, 0.0), np.where(cov, w, 0.0)
@@ -649,7 +691,7 @@ def image_widths(x: FitInputs, P_cam: np.ndarray) -> dict:
     glen = group_lengths(x.pos_2b)
     for g, (l, r) in (("shoulder", ("l_shoulder", "r_shoulder")), ("hip", ("l_hip", "r_hip"))):
         l, r = J[l], J[r]
-        ok = (x.w2d[:, l] == 1) & (x.w2d[:, r] == 1)
+        ok = x.vis2d[:, l] & x.vis2d[:, r]
         expected = 2 * glen[GROUPS.index(g)]
         if ok.sum() < 10:
             out[g] = dict(used=False, ratio_width_m=float(expected))
@@ -676,7 +718,7 @@ def _stats(pb: Problem, x: FitInputs, P: np.ndarray) -> dict:
     with torch.no_grad():
         uvp = pb.project(torch.as_tensor(P, dtype=T_)).numpy()
     err = np.linalg.norm(uvp - x.uv, axis=-1)
-    vis2d = x.w2d == 1.0
+    vis2d = x.vis2d
     out = {"px_2d_median_visible": float(np.nanmedian(err[vis2d])) if vis2d.any() else None,
            "px_2d_p90_visible": float(np.nanpercentile(err[vis2d], 90)) if vis2d.any() else None}
     m = pb.vis_m.numpy() > 0
