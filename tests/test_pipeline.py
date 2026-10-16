@@ -192,3 +192,97 @@ def test_clip_scale_recovers_factor():
     ref = np.where(masks, 3.7 * s2, 9.0)         # background disagrees; only the body counts
     masks[0] = False                             # a frame without the person is skipped
     assert clip_scale(ref, s2, masks) == pytest.approx(3.7, rel=1e-4)
+
+
+def test_shrunk_body_frames_are_dropped():
+    # a pass-by close to the camera: MediaPipe squeezes the whole person into the visible part
+    cap, *_ = _synthetic_capture(T=120)
+    lm2 = cap["landmarks_2d"]
+    hips = 0.5 * (lm2[:, 23] + lm2[:, 24])
+    lm2[50:58] = hips[50:58, None] + 0.4 * (lm2[50:58] - hips[50:58, None])
+    out = clean_arrays(cap)
+    assert out["shrunk"][50:58].all() and out["shrunk"].sum() == 8
+    assert out["undetected"][50:58].all()
+    # a real turn only narrows the body ~1.4x at most: that must survive
+    cap, *_ = _synthetic_capture(T=120)
+    lm2 = cap["landmarks_2d"]
+    hips = 0.5 * (lm2[:, 23] + lm2[:, 24])
+    lm2[50:58, :, 0] = hips[50:58, None, 0] + (lm2[50:58, :, 0] - hips[50:58, None, 0]) / 1.4
+    assert not clean_arrays(cap)["shrunk"].any()
+
+
+def test_clean_config_json_override(tmp_path):
+    from core.clean import CleanConfig
+
+    p = tmp_path / "clean.json"
+    p.write_text('{"vis_thresh": 0.3, "hip_band_hz": [0.5, 5.0]}')
+    cfg = CleanConfig.load(p, lean_fix=True, free_floor=None)
+    assert cfg.vis_thresh == 0.3 and cfg.hip_band_hz == (0.5, 5.0) and cfg.lean_fix and not cfg.free_floor
+    p.write_text('{"vis_tresh": 0.3}')
+    with pytest.raises(ValueError, match="unknown"):
+        CleanConfig.load(p)
+    assert CleanConfig.load(tmp_path / "missing.json") == CleanConfig()
+
+
+def test_background_motion_takes_fastest_band(tmp_path):
+    import cv2
+
+    # distant buildings (top two thirds) still, nearby ground (bottom third) sliding 6 px/frame
+    rng = np.random.default_rng(0)
+    tex = cv2.GaussianBlur(rng.uniform(0, 255, (240, 1200)).astype(np.uint8), (5, 5), 0)
+    path = tmp_path / "dolly.mp4"
+    wr = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"), 30, (320, 240))
+    for t in range(40):
+        img = tex[:, :320].copy()
+        img[160:] = tex[160:, 6 * t:6 * t + 320]
+        wr.write(cv2.cvtColor(img, cv2.COLOR_GRAY2BGR))
+    wr.release()
+    uv = np.full((40, N_JOINTS, 2), [160.0, 120.0]) + np.linspace(-5, 5, N_JOINTS)[None, :, None]
+    motion, bands = fit2d.background_motion(path, uv, n_pairs=12)
+    assert bands[0] < 0.5 and bands[1] < 0.5
+    assert motion == pytest.approx(6.0, abs=0.7)
+
+
+def _depth_case():
+    x, P, pos = _fit_inputs(True, T=40)
+    x.z_fallback = np.full_like(x.z_surface, np.nan)
+    return x, P
+
+
+def test_impossible_depth_marks_nearer_end():
+    x, P = _depth_case()
+    z = x.z_surface.copy()
+    k, w, e = 3, J["l_wrist"], J["l_elbow"]
+    z[k, w] = z[k, e] - 0.6          # forearm ~25 cm long cannot reach 60 cm toward the camera
+    imp = fit2d.impossible_depth(x, z, np.isfinite(z))
+    assert imp[k, w] and not imp[k, e]
+    assert imp[k].sum() == 1
+    assert imp.mean() < 0.01      # noise alone rarely trips it
+
+
+def test_near_hand_and_interpolation_carry_cover():
+    x, P = _depth_case()
+    x.hand_uv = np.stack([x.uv[:, J["l_wrist"]], x.uv[:, J["r_wrist"]]], 1)
+    near = fit2d.near_hand(x, P)
+    assert near[:, J["l_wrist"]].all() and not near[:, J["head"]].any()
+    f = np.array([0, 4, 8])
+    z = np.ones((3, N_JOINTS))
+    w_vis = np.ones((3, N_JOINTS))
+    w_cov = np.zeros((3, N_JOINTS))
+    w_vis[1, 5], w_cov[1, 5] = 0.0, 1.0   # joint 5 covered at the middle sample
+    ff, zz, wv, wc = fit2d.interpolate_rows(f, z, w_vis, w_cov)
+    assert list(ff) == list(range(9))
+    assert (wc[1:8, 5] > 0).all() and (wv[1:8, 5] == 0).all()     # covered carries both ways
+    assert (wv[:, 6] > 0).all()
+    assert wv.sum() + wc.sum() == pytest.approx(w_vis.sum() + w_cov.sum())  # no extra evidence
+
+
+def test_image_widths_facing_vs_side():
+    x, P = _depth_case()
+    w = fit2d.image_widths(x, P)
+    assert w["shoulder"]["used"] and w["hip"]["used"]
+    true = np.linalg.norm(P[:, J["l_shoulder"]] - P[:, J["r_shoulder"]], axis=-1).max()
+    assert w["shoulder"]["image_width_m"] == pytest.approx(true, rel=0.08)
+    # side view: the shoulders overlap on screen, so the ratio width stays
+    x.uv[:, J["r_shoulder"]] = x.uv[:, J["l_shoulder"]] + 3.0
+    assert not fit2d.image_widths(x, P)["shoulder"]["used"]

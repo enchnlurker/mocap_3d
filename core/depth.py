@@ -5,6 +5,9 @@ body distance, torso surface samples, focal length.
 
 Depth Pro (Apple) estimates metric depth and focal length from one image.
 Default: 8 evenly spaced frames (~35 s per clip on MPS); --stride 1 for every frame.
+Frames where MediaPipe found nobody are skipped. Each full-resolution Depth Pro
+frame is cached in data/<clip>/cache/depth_pro/, so a re-run (or a denser
+--stride) only computes frames it hasn't seen.
 
 Camera frame: x right, y down, z forward (OpenCV). Floor normal points up.
 camera_pitch_deg > 0 means the camera looks down.
@@ -56,6 +59,28 @@ def load_depth_pro(device: str | None = None):
         with torch.no_grad():
             pred = model.infer(transform(rgb), f_px=f_px)
         return pred["depth"].float().cpu().numpy(), float(pred["focallength_px"])
+
+    return infer
+
+
+def detected_frames(cap: dict) -> np.ndarray:
+    """Frames where MediaPipe found a person."""
+    return np.nonzero(np.isfinite(cap["landmarks_2d"]).all((1, 2)))[0]
+
+
+def cached_infer(clip: schema.Clip, get_model):
+    """Depth Pro with a per-frame cache: (frame index, rgb) -> (depth, focal)."""
+    cache = clip / "cache" / "depth_pro"
+
+    def infer(i: int, rgb: np.ndarray):
+        path = cache / f"f{i:06d}.npz"
+        if path.exists():
+            with np.load(path) as f:
+                return f["depth"].astype(np.float32), float(f["focal_px"])
+        depth, f = get_model()(rgb)
+        cache.mkdir(parents=True, exist_ok=True)
+        np.savez_compressed(path, depth=depth.astype(np.float16), focal_px=f)
+        return depth, f
 
     return infer
 
@@ -149,8 +174,18 @@ def run(clip: schema.Clip, n: int = 8, stride: int | None = None, device: str | 
     cap = schema.load(clip.capture)
     W, H, T = int(cap["width"]), int(cap["height"]), int(cap["n_frames"])
     uv20 = map_mediapipe(cap["landmarks_2d"])
-    frames = np.arange(0, T, stride) if stride else video.evenly_spaced(T, n)
-    infer = load_depth_pro(device)
+    seen = detected_frames(cap)
+    if not len(seen):
+        raise RuntimeError(f"{clip.name}: MediaPipe found no person in any frame")
+    frames = np.intersect1d(np.arange(0, T, stride), seen) if stride else seen[video.evenly_spaced(len(seen), n)]
+    model = []
+
+    def load():
+        if not model:
+            model.append(load_depth_pro(device))
+        return model[0]
+
+    infer = cached_infer(clip, load)
     masker = video.PersonMasker()
     rng = np.random.default_rng(0)
     cx, cy = (W - 1) / 2, (H - 1) / 2
@@ -159,7 +194,7 @@ def run(clip: schema.Clip, n: int = 8, stride: int | None = None, device: str | 
                 torso_points_cam=[], pelvis_distance_m=[], focal_px=[], depth_maps=[], person_masks=[])
     t0 = time.time()
     for i, rgb in video.frames(clip.video, frames):
-        depth, f = infer(rgb)
+        depth, f = infer(i, rgb)
         person = masker(rgb)
         small = cv2.resize(depth, (W // QUARTER, H // QUARTER), interpolation=cv2.INTER_AREA)
         psmall = cv2.resize(person.astype(np.uint8), small.shape[::-1], interpolation=cv2.INTER_NEAREST) > 0

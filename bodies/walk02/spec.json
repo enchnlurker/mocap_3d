@@ -1,0 +1,291 @@
+{
+  "name": "walk02",
+  "source": "data/walk02/clean_depth.npz",
+  "height_m": 1.7306,
+  "bmi": 22.0,
+  "mass_kg": 65.89,
+  "lengths_m": {
+    "spine": 0.2683,
+    "head": 0.2104,
+    "shoulder": 0.1657,
+    "hip": 0.0987,
+    "thigh": 0.4374,
+    "shin": 0.4298,
+    "heel": 0.077,
+    "foot": 0.1959,
+    "upper_arm": 0.3068,
+    "forearm": 0.2463
+  },
+  "ankle_height_m": 0.0655,
+  "radii_m": {
+    "pelvis": [
+      0.1593,
+      0.1073,
+      0.1211
+    ],
+    "abdomen": [
+      0.1385,
+      0.1004,
+      0.1744
+    ],
+    "chest": [
+      0.1592,
+      0.1108,
+      0.1744
+    ],
+    "shoulder_girdle": 0.0623,
+    "neck": 0.0554,
+    "head": [
+      0.0865,
+      0.1004,
+      0.1142
+    ],
+    "deltoid": [
+      0.0588,
+      0.0623,
+      0.0865
+    ],
+    "upper_arm": 0.0415,
+    "forearm": 0.0329,
+    "hand": [
+      0.0225,
+      0.0467,
+      0.0865
+    ],
+    "thigh": 0.0588,
+    "thigh_muscle": [
+      0.0796,
+      0.0831,
+      0.1837
+    ],
+    "shin": 0.0415,
+    "calf": [
+      0.0519,
+      0.0588,
+      0.1375
+    ],
+    "foot_half_width": 0.045
+  },
+  "mass_fractions": {
+    "pelvis": 0.1117,
+    "abdomen": 0.1633,
+    "chest": 0.1596,
+    "head": 0.0694,
+    "upper_arm": 0.0271,
+    "forearm": 0.0223,
+    "thigh": 0.1416,
+    "shin": 0.0433,
+    "foot": 0.0137
+  },
+  "joints": {
+    "abdomen_flex": {
+      "axis": [
+        -1,
+        0,
+        0
+      ],
+      "range_deg": [
+        -25,
+        45
+      ]
+    },
+    "abdomen_side": {
+      "axis": [
+        0,
+        1,
+        0
+      ],
+      "range_deg": [
+        -25,
+        25
+      ]
+    },
+    "abdomen_twist": {
+      "axis": [
+        0,
+        0,
+        1
+      ],
+      "range_deg": [
+        -30,
+        30
+      ]
+    },
+    "chest_flex": {
+      "axis": [
+        -1,
+        0,
+        0
+      ],
+      "range_deg": [
+        -25,
+        45
+      ]
+    },
+    "chest_side": {
+      "axis": [
+        0,
+        1,
+        0
+      ],
+      "range_deg": [
+        -25,
+        25
+      ]
+    },
+    "chest_twist": {
+      "axis": [
+        0,
+        0,
+        1
+      ],
+      "range_deg": [
+        -30,
+        30
+      ]
+    },
+    "neck_flex": {
+      "axis": [
+        -1,
+        0,
+        0
+      ],
+      "range_deg": [
+        -60,
+        70
+      ]
+    },
+    "neck_side": {
+      "axis": [
+        0,
+        1,
+        0
+      ],
+      "range_deg": [
+        -45,
+        45
+      ]
+    },
+    "neck_twist": {
+      "axis": [
+        0,
+        0,
+        1
+      ],
+      "range_deg": [
+        -80,
+        80
+      ]
+    },
+    "hip_flex": {
+      "axis": [
+        1,
+        0,
+        0
+      ],
+      "range_deg": [
+        -30,
+        125
+      ]
+    },
+    "hip_abd": {
+      "axis": [
+        0,
+        1,
+        0
+      ],
+      "range_deg": [
+        -30,
+        45
+      ]
+    },
+    "hip_rot": {
+      "axis": [
+        0,
+        0,
+        -1
+      ],
+      "range_deg": [
+        -45,
+        45
+      ]
+    },
+    "knee": {
+      "axis": [
+        -1,
+        0,
+        0
+      ],
+      "range_deg": [
+        0,
+        150
+      ]
+    },
+    "ankle_flex": {
+      "axis": [
+        1,
+        0,
+        0
+      ],
+      "range_deg": [
+        -50,
+        30
+      ]
+    },
+    "ankle_roll": {
+      "axis": [
+        0,
+        1,
+        0
+      ],
+      "range_deg": [
+        -30,
+        30
+      ]
+    },
+    "shoulder_flex": {
+      "axis": [
+        1,
+        0,
+        0
+      ],
+      "range_deg": [
+        -60,
+        180
+      ]
+    },
+    "shoulder_abd": {
+      "axis": [
+        0,
+        1,
+        0
+      ],
+      "range_deg": [
+        -30,
+        180
+      ]
+    },
+    "shoulder_rot": {
+      "axis": [
+        0,
+        0,
+        -1
+      ],
+      "range_deg": [
+        -90,
+        90
+      ]
+    },
+    "elbow": {
+      "axis": [
+        1,
+        0,
+        0
+      ],
+      "range_deg": [
+        0,
+        150
+      ]
+    }
+  }
+}

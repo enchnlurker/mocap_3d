@@ -1,7 +1,7 @@
 # Glossary
 
 - **2b**: proportions stage; MediaPipe bone directions, standard adult lengths (H = trunk / 0.288).
-- **2c / fit2d**: per-clip solve so the skeleton projects onto MediaPipe 2D, with Depth Pro relative depth.
+- **2c / fit2d**: per-clip solve so the skeleton projects onto MediaPipe 2D, with relative depth from 1d (Sapiens2 scaled to Depth Pro).
 - **captured / tracked**: joint was seen (visible or occluded-in-frame) in at least one frame; never guessed.
 - **occluded**: low visibility, presence ≥ 0.5, inside the frame (3 % margin): hidden in frame, MediaPipe's guess kept.
 - **inferred**: filled by rules (`core/infer_hidden.py`), never treated as capture; excluded from metrics.
@@ -10,4 +10,13 @@
 - **MPJPE**: mean per-joint position error after aligning pelvises.
 - **soft-L1**: robust cost 2(√(1+r²) − 1); quadratic near 0, linear for outliers.
 - **Depth Pro**: Apple's single-image metric depth + focal length model.
-- **static / moving camera**: background moves < / ≥ 0.5 px per frame.
+- **static / moving camera**: the fastest of three horizontal background bands moves < / ≥ 0.5 px per frame.
+- **undetected / shrunk frame**: no person found, or a squeezed whole-body detection (size per metre < 1/1.6 of the surrounding second); no 2D or depth evidence used.
+- **lower bound (covered reading)**: a depth reading 2c uses as "the joint is at least this far" only (covered by a limb, the torso, a hand or held object, the near side of a pair, or the nearer end of an impossible bone).
+- **fallback reading**: Depth Pro's depth at a joint whose Sapiens2 patch missed the person (1c frames only); half weight in 2c.
+- **image width**: shoulder / hip width from the widest on-screen span, used by 2c when the person faced the camera at some point.
+- **spec.json / body.xml**: a body's editable source of truth and the MJCF generated from it (3A).
+- **unstick**: retarget rule restarting a straight elbow / knee at its target's bend.
+- **pop**: a hinge jumping more than 30° in one frame (at 30 fps).
+- **body shapes**: per-frame world pose of every body geom (`bodyshapes_<body>.npz`).
+- **props**: 3A2 collision shapes the body touches (support) or holds (held, attached to a body part).

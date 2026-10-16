@@ -11,7 +11,8 @@ from core.schema import MODELS
 
 def main():
     print(f"python {platform.python_version()} on {platform.platform()}")
-    for mod in ("numpy", "scipy", "cv2", "mediapipe", "torch", "depth_pro", "transformers", "matplotlib"):
+    for mod in ("numpy", "scipy", "cv2", "mediapipe", "torch", "depth_pro", "transformers", "matplotlib",
+                "mujoco", "mink", "daqp", "openai"):
         try:
             m = importlib.import_module(mod)
             print(f"  {mod:<11} {getattr(m, '__version__', 'ok')}")
@@ -24,6 +25,9 @@ def main():
     except Exception:  # noqa: BLE001
         pass
     print(f"  ffmpeg: {shutil.which('ffmpeg') or 'not found'}")
+    from core.env_extract import _api_key
+
+    print(f"  OPENAI_API_KEY: {'set' if _api_key() else 'not set (3A2 uses the code method)'}")
     for name in ("pose_landmarker_heavy.task", "pose_landmarker_full.task", "depth_pro.pt"):
         p = MODELS / name
         print(f"  {name:<28} {'%.0f MB' % (p.stat().st_size / 1e6) if p.exists() else 'MISSING'}")

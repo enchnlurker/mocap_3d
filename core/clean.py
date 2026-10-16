@@ -1,9 +1,18 @@
 """Stage 2: cleanup (+ 2b proportions). Reads 1a + 1c.
 
-    python -m core.clean clip01 [--no-depth] [--free-floor]
+    python -m core.clean clip01 [--no-depth] [--free-floor] [--lean-fix] [--config c.json]
 
-Writes clean_depth.npz (when depth.npz was used) or clean.npz:
-  1. Map 33 landmarks to 20 joints.
+Every threshold lives in CleanConfig. configs/<clip>/clean.json (or --config)
+overrides any of its fields for one clip.
+
+Writes clean_depth.npz (when depth.npz was used) or clean.npz, plus
+clean_summary.json (counts, depth reference, lean stats, the config used) and
+clean_before_after.png:
+  1. Map 33 landmarks to 20 joints. Drop shrunk-body frames: a person walking
+     very close to the camera, with only hips and legs in shot, still comes
+     back as a whole, confident person squeezed into the visible part. Such a
+     frame's on-screen size per metre (from the least foreshortened bone, as
+     projection can only shorten a bone) falls far below the surrounding second's.
   2. Fix left/right swaps using 2D continuity between frames.
   3. Drop bad points. Low-visibility points are dropped unless occluded:
      present, inside the frame (3% margin), and the joint is kept in >= 50% of
@@ -19,31 +28,69 @@ Writes clean_depth.npz (when depth.npz was used) or clean.npz:
   8. Fill hidden limbs with rules (core.infer_hidden), flagged `inferred`.
   9. Detect foot contacts; save per-joint 2D points (uv_2d) for 2c.
  2b. Proportions (core.proportions), on by default.
+
+Optional (lean_fix, off by default): rotate the upper body about the pelvis so
+its lean toward the camera matches Depth Pro's torso surface. At ~3 m the
+reading is inside Depth Pro's error, so it is only reported unless asked for.
 """
 
 from __future__ import annotations
 
 import argparse
+import dataclasses
+import json
+from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
+from scipy.ndimage import median_filter
 
 from core import proportions, schema
 from core.filters import bandpass, fill_gaps, hold_edges, lowpass, mode_filter, spikes
 from core.infer_hidden import infer_hidden
-from core.skeleton import (ANKLE_HEIGHT_RATIO, BONE_NAMES, BONE_PAIRS, CONTACT_JOINTS, FEET, J,
-                           JOINT_NAMES, bone_lengths_from_groups, group_lengths, map_mediapipe)
+from core.skeleton import (BONE_NAMES, BONE_PAIRS, CONTACT_JOINTS, FEET, J, JOINT_NAMES,
+                           bone_lengths_from_groups, group_lengths, map_mediapipe)
 from core.depth import plane_basis
 
-VIS_THRESH = 0.5
-PRESENCE_THRESH = 0.5
-EDGE_MARGIN = 0.03
-MIN_KEPT_FRAC = 0.5
-MAX_GAP_S = 0.5
-SMOOTH_HZ = 6.0
-SMOOTH_DEPTH_HZ = 3.0
-HIP_BAND_HZ = (0.4, 6.0)
-CONTACT_HEIGHT_M = 0.04
-CONTACT_SPEED_MS = 0.4
+
+@dataclass
+class CleanConfig:
+    vis_thresh: float = 0.5
+    presence_thresh: float = 0.5
+    edge_margin: float = 0.03          # fraction of the image kept as "inside the frame"
+    min_kept_frac: float = 0.5         # joint kept in fewer frames loses its occluded samples; feet seen in fewer -> no feet
+    max_gap_s: float = 0.5
+    smooth_hz: float = 6.0
+    smooth_depth_hz: float = 3.0
+    hip_band_hz: tuple[float, float] = (0.4, 6.0)
+    contact_height_m: float = 0.04
+    contact_speed_ms: float = 0.4
+    swap_switch_cost: float = 0.3      # per label flip, in body-size units
+    swap_stay_cost: float = 0.02       # per swapped frame: ties go to MediaPipe's own labels
+    shrink_ratio: float = 1.6          # frame size per metre below 1/ratio of the surrounding second -> undetected
+    shrink_window_s: float = 1.0
+    shrink_min_bone_m: float = 0.1     # bones shorter than this in MediaPipe 3D don't measure size
+    free_floor: bool = False           # feet floor fit with sideways tilt
+    lean_fix: bool = False             # rotate the upper body to Depth Pro's torso lean
+
+    @classmethod
+    def load(cls, path: str | Path | None, **overrides) -> "CleanConfig":
+        """Defaults, then the JSON file (if it exists), then overrides that aren't None."""
+        cfg = cls()
+        if path is not None and Path(path).exists():
+            data = json.loads(Path(path).read_text())
+            names = {f.name for f in dataclasses.fields(cls)}
+            unknown = set(data) - names
+            if unknown:
+                raise ValueError(f"{path}: unknown CleanConfig fields {sorted(unknown)}")
+            if "hip_band_hz" in data:
+                data["hip_band_hz"] = tuple(data["hip_band_hz"])
+            cfg = dataclasses.replace(cfg, **data)
+        return dataclasses.replace(cfg, **{k: v for k, v in overrides.items() if v is not None})
+
+
+def clip_config_path(clip: schema.Clip) -> Path:
+    return schema.ROOT / "configs" / clip.name / "clean.json"
 
 SWAP_CHAINS = [
     ([J["l_knee"], J["l_ankle"], J["l_heel"], J["l_toe"]], [J["r_knee"], J["r_ankle"], J["r_heel"], J["r_toe"]]),
@@ -51,17 +98,13 @@ SWAP_CHAINS = [
 ]
 
 
-SWAP_SWITCH_COST = 0.3   # per label flip, in body-size units
-SWAP_STAY_COST = 0.02    # per swapped frame: ties go to MediaPipe's own labels
-
-
-def fix_swaps(uv, lm3, arrays, scale_px, scale_m):
+def fix_swaps(uv, lm3, arrays, scale_px, scale_m, switch_cost=0.3, stay_cost=0.02):
     """Swap limb chains whose left/right labels jumped between frames.
 
     Per chain, picks the labelling over the whole clip (Viterbi over
     "as given" / "swapped") that moves least between frames, in 2D and in
     MediaPipe's 3D (which separates near and far limbs that overlap in a
-    side view). Flipping costs SWAP_SWITCH_COST, so one ambiguous frame can't
+    side view). Flipping costs switch_cost, so one ambiguous frame can't
     start a long run of wrong labels.
 
     uv [T,20,2], lm3 [T,20,3]; both and `arrays` are swapped in place.
@@ -82,7 +125,7 @@ def fix_swaps(uv, lm3, arrays, scale_px, scale_m):
             return d2 + d3
 
         n = len(frames)
-        cost = np.array([0.0, SWAP_STAY_COST])
+        cost = np.array([0.0, stay_cost])
         back = np.zeros((n, 2), int)
         for k in range(1, n):
             a, b = frames[k - 1], frames[k]
@@ -90,9 +133,9 @@ def fix_swaps(uv, lm3, arrays, scale_px, scale_m):
             new = np.empty(2)
             for s in (0, 1):
                 # from state p at a to state s at b: relative flip iff p != s
-                opts = [cost[p] + (same if p == s else cross + SWAP_SWITCH_COST) for p in (0, 1)]
+                opts = [cost[p] + (same if p == s else cross + switch_cost) for p in (0, 1)]
                 back[k, s] = int(np.argmin(opts))
-                new[s] = min(opts) + SWAP_STAY_COST * s
+                new[s] = min(opts) + stay_cost * s
             cost = new
         state = np.zeros(n, int)
         state[-1] = int(np.argmin(cost))
@@ -112,6 +155,68 @@ def _pair_scale(a: np.ndarray, keep: np.ndarray) -> tuple[float, str]:
         if m.sum() >= 5:
             return float(np.median(np.linalg.norm(a[m, J[p]] - a[m, J[q]], axis=-1))), f"{p}-{q}"
     return float("nan"), ""
+
+
+def body_size(lm2: np.ndarray, lm3: np.ndarray, min_bone_m: float = 0.1) -> np.ndarray:
+    """[T] on-screen size per metre: the largest px / m over bones. Projection can
+    only shorten a bone, so the least foreshortened one gives the true scale."""
+    a, b = BONE_PAIRS[:, 0], BONE_PAIRS[:, 1]
+    l2 = np.linalg.norm(lm2[:, b] - lm2[:, a], axis=-1)
+    l3 = np.linalg.norm(lm3[:, b] - lm3[:, a], axis=-1)
+    with np.errstate(all="ignore"):
+        r = np.where(l3 > min_bone_m, l2 / l3, np.nan)
+    out = np.full(len(r), np.nan)
+    ok = np.isfinite(r).any(1)
+    out[ok] = np.nanmax(r[ok], axis=1)
+    return out
+
+
+def shrunk_frames(size: np.ndarray, fps: float, ratio: float, window_s: float) -> np.ndarray:
+    """[T] frames whose body size is below 1/ratio of the surrounding window's median."""
+    ok = np.isfinite(size)
+    if ok.sum() < 3:
+        return np.zeros(len(size), bool)
+    filled = np.interp(np.arange(len(size)), np.nonzero(ok)[0], size[ok])
+    ref = median_filter(filled, size=max(3, int(round(2 * window_s * fps)) | 1), mode="nearest")
+    return ok & (size < ref / ratio)
+
+
+def torso_lean(depth: dict, lm3_cam: np.ndarray) -> dict:
+    """Torso lean toward the camera (deg, + = top nearer) per 1c frame, from
+    Depth Pro's torso surface and from MediaPipe's trunk; camera-aligned axes."""
+    dp, mp = [], []
+    for k, t in enumerate(depth["frames"]):
+        pts = depth["torso_points_cam"][k]
+        pts = pts[np.isfinite(pts).all(1)]
+        u = lm3_cam[t, J["neck"]] - lm3_cam[t, J["pelvis"]]
+        if len(pts) < 10 or not np.isfinite(u).all():
+            continue
+        A = np.c_[pts[:, 0], pts[:, 1], np.ones(len(pts))]
+        b = np.linalg.lstsq(A, pts[:, 2], rcond=None)[0][1]   # dz / dy on the surface
+        dp.append(np.degrees(np.arctan(b)))
+        mp.append(np.degrees(np.arctan2(-u[2], -u[1])))
+    dp, mp = np.asarray(dp), np.asarray(mp)
+    if not len(dp):
+        return dict(n_frames=0)
+    diff = dp - mp
+    return dict(n_frames=int(len(dp)), depth_deg_median=float(np.median(dp)),
+                mediapipe_deg_median=float(np.median(mp)), diff_deg_median=float(np.median(diff)),
+                diff_deg_spread=float(np.percentile(diff, 75) - np.percentile(diff, 25)))
+
+
+UPPER_BODY = [J[n] for n in ("neck", "head", "l_shoulder", "r_shoulder", "l_elbow", "r_elbow",
+                             "l_wrist", "r_wrist")]
+
+
+def rotate_upper_body(lm3: np.ndarray, deg: float) -> np.ndarray:
+    """Lean the upper body toward the camera by deg about the pelvis (camera x axis)."""
+    a = np.radians(deg)
+    R = np.array([[1, 0, 0], [0, np.cos(a), -np.sin(a)], [0, np.sin(a), np.cos(a)]])
+    out = lm3.copy()
+    pel = lm3[:, J["pelvis"]][:, None]
+    out[:, UPPER_BODY] = (lm3[:, UPPER_BODY] - pel) @ R.T + pel
+    out[:, J["spine"]] = 0.5 * (out[:, J["pelvis"]] + out[:, J["neck"]])
+    return out
 
 
 def floor_from_feet(lm3: np.ndarray, keep: np.ndarray, free: bool = False, rng=None):
@@ -150,19 +255,32 @@ def floor_from_feet(lm3: np.ndarray, keep: np.ndarray, free: bool = False, rng=N
     return n / np.linalg.norm(n)
 
 
-def clean_arrays(cap: dict, depth: dict | None = None, *, free_floor: bool = False) -> dict:
+def clean_arrays(cap: dict, depth: dict | None = None, cfg: CleanConfig | None = None) -> dict:
+    cfg = cfg or CleanConfig()
     fps = float(cap["fps"])
     W, H = float(cap["width"]), float(cap["height"])
     T = len(cap["landmarks"])
-    max_gap = int(round(MAX_GAP_S * fps))
+    max_gap = int(round(cfg.max_gap_s * fps))
 
-    # 1. map
+    # 1. map; shrunk-body frames count as undetected
     lm3 = map_mediapipe(cap["landmarks"]).astype(float)
     lm2 = map_mediapipe(cap["landmarks_2d"]).astype(float)
     vis = map_mediapipe(cap["confidence"], "min").astype(float)
     pres = map_mediapipe(cap["presence"], "min").astype(float)
+    size = body_size(lm2, lm3, cfg.shrink_min_bone_m)
+    shrunk = shrunk_frames(size, fps, cfg.shrink_ratio, cfg.shrink_window_s)
+    lm3[shrunk] = np.nan
+    lm2[shrunk] = np.nan
+    vis[shrunk] = 0.0
+    pres[shrunk] = 0.0
+    lean = torso_lean(depth, lm3) if depth is not None and "torso_points_cam" in depth else dict(n_frames=0)
+    lean["applied_deg"] = 0.0
+    if cfg.lean_fix and lean["n_frames"]:
+        lm3 = rotate_upper_body(lm3, lean["diff_deg_median"])
+        lean["applied_deg"] = lean["diff_deg_median"]
     raw3 = lm3.copy()
     detected = np.isfinite(lm2).all(-1) & np.isfinite(lm3).all(-1)
+    undetected = ~detected.any(1)
 
     # 2. swaps
     scale_px, _ = _pair_scale(lm2, detected)
@@ -171,15 +289,15 @@ def clean_arrays(cap: dict, depth: dict | None = None, *, free_floor: bool = Fal
     scale_m, _ = _pair_scale(lm3, detected)
     if not np.isfinite(scale_m):
         scale_m = 0.5
-    swapped = fix_swaps(lm2, lm3, [vis, pres], scale_px, scale_m)
+    swapped = fix_swaps(lm2, lm3, [vis, pres], scale_px, scale_m, cfg.swap_switch_cost, cfg.swap_stay_cost)
 
     # 3. drop
-    m = EDGE_MARGIN
+    m = cfg.edge_margin
     in_frame = detected & (lm2[..., 0] >= m * W) & (lm2[..., 0] <= (1 - m) * W) \
         & (lm2[..., 1] >= m * H) & (lm2[..., 1] <= (1 - m) * H)
-    visible = detected & (vis >= VIS_THRESH)
-    occluded = detected & ~visible & (pres >= PRESENCE_THRESH) & in_frame
-    weak = (visible | occluded).mean(0) < MIN_KEPT_FRAC
+    visible = detected & (vis >= cfg.vis_thresh)
+    occluded = detected & ~visible & (pres >= cfg.presence_thresh) & in_frame
+    weak = (visible | occluded).mean(0) < cfg.min_kept_frac
     occluded[:, weak] = False  # no revival from edge frames
     keep = visible | occluded
     for j in range(len(JOINT_NAMES)):
@@ -194,20 +312,20 @@ def clean_arrays(cap: dict, depth: dict | None = None, *, free_floor: bool = Fal
     filled = np.zeros_like(keep)
     for j in np.nonzero(tracked)[0]:
         lm3[:, j], filled[:, j] = fill_gaps(lm3[:, j], keep[:, j], max_gap)
-    lm3[..., :2] = lowpass(lm3[..., :2], fps, SMOOTH_HZ)
-    lm3[..., 2:] = lowpass(lm3[..., 2:], fps, SMOOTH_DEPTH_HZ)
+    lm3[..., :2] = lowpass(lm3[..., :2], fps, cfg.smooth_hz)
+    lm3[..., 2:] = lowpass(lm3[..., 2:], fps, cfg.smooth_depth_hz)
     have = keep | filled
 
     # feet count only when actually seen: a guess under a blanket or a table isn't a planted foot
     feet_frac = (keep & ~occluded)[:, FEET].any(1).mean()
-    has_feet = bool(feet_frac >= MIN_KEPT_FRAC)
+    has_feet = bool(feet_frac >= cfg.min_kept_frac)
 
     # 5. floor direction: depth > feet > none
     n_cam, floor_source = None, "none"
     if depth is not None and bool(depth.get("floor_found", False)):
         n_cam, floor_source = np.asarray(depth["floor_normal_clip"], float), "depth"
     elif has_feet:
-        n_cam = floor_from_feet(lm3, have, free_floor)
+        n_cam = floor_from_feet(lm3, have, cfg.free_floor)
         floor_source = "feet" if n_cam is not None else "none"
     if n_cam is None:
         n_cam = np.array([0.0, -1.0, 0.0])
@@ -216,7 +334,7 @@ def clean_arrays(cap: dict, depth: dict | None = None, *, free_floor: bool = Fal
     pos_raw = raw3 @ R.T
 
     # 7. hip motion from the 2D hip track (pelvis, or neck if hips never seen)
-    root_joint = "pelvis" if keep[:, J["pelvis"]].mean() >= MIN_KEPT_FRAC else "neck"
+    root_joint = "pelvis" if keep[:, J["pelvis"]].mean() >= cfg.min_kept_frac else "neck"
     focal = float("nan")
     if depth is not None:
         dist = np.nanmedian(depth["pelvis_distance_m"]) if np.isfinite(depth["pelvis_distance_m"]).any() else np.nan
@@ -234,7 +352,7 @@ def clean_arrays(cap: dict, depth: dict | None = None, *, free_floor: bool = Fal
     if ok.sum() > 3 * fps:
         track, _ = fill_gaps(track, ok, None)
         track = hold_edges(track)
-        band = bandpass(track, fps, *HIP_BAND_HZ)
+        band = bandpass(track, fps, *cfg.hip_band_hz)
         root_motion[:, 0] = band[:, 0] * m_per_px
         root_motion[:, 2] = -band[:, 1] * m_per_px
     pos += root_motion[:, None]
@@ -281,7 +399,7 @@ def clean_arrays(cap: dict, depth: dict | None = None, *, free_floor: bool = Fal
             ground = np.percentile(z[ok], 5)
             v = np.zeros(T)
             v[1:] = np.linalg.norm(np.diff(pos[:, j, :2], axis=0), axis=1) * fps
-            contacts[:, c] = mode_filter(ok & (z - ground < CONTACT_HEIGHT_M) & (v < CONTACT_SPEED_MS), 5)
+            contacts[:, c] = mode_filter(ok & (z - ground < cfg.contact_height_m) & (v < cfg.contact_speed_ms), 5)
 
     glen = group_lengths(pos, captured)
     glen = np.where(np.isfinite(glen), glen, group_lengths(pos))
@@ -301,6 +419,7 @@ def clean_arrays(cap: dict, depth: dict | None = None, *, free_floor: bool = Fal
         m_per_px=m_per_px, focal_px=focal, root_joint=root_joint, has_feet=has_feet,
         positions_proportional=prop, bone_lengths_proportional=prop_bones,
         proportional_height_m=height, source="mediapipe",
+        undetected=undetected, shrunk=shrunk, body_size_px_per_m=size, lean=lean,
     )
 
 
@@ -318,12 +437,39 @@ def _depth_hip_heights(depth: dict, lm2_px: np.ndarray, W: float, H: float) -> n
     return np.asarray(out)
 
 
-def run(clip: schema.Clip, use_depth: bool = True, free_floor: bool = False, plots: bool = True) -> dict:
+def summary(out: dict, depth: dict | None, cfg: CleanConfig, path: Path) -> dict:
+    """What clean_summary.json records: counts, depth reference, lean stats, config."""
+    ref = dict(used=depth is not None)
+    if depth is not None:
+        ok = np.asarray(depth["floor_valid"], bool)
+        ref.update(floor_found=bool(depth["floor_found"]), floor_frames=f"{int(ok.sum())}/{len(ok)}",
+                   camera_pitch_deg=float(np.nanmedian(depth["camera_pitch_deg"])) if ok.any() else None,
+                   camera_height_m=float(depth["floor_d_clip"]) if ok.any() else None,
+                   body_distance_m=float(np.nanmedian(depth["pelvis_distance_m"]))
+                   if np.isfinite(depth["pelvis_distance_m"]).any() else None,
+                   focal_px=float(np.nanmedian(depth["focal_px"])))
+    return dict(
+        file=path.name, frames=int(len(out["positions"])), tracked_joints=int(out["tracked"].sum()),
+        has_feet=bool(out["has_feet"]), floor_source=str(out["floor_source"]),
+        vertical_source=str(out["vertical_source"]), height_m=round(float(out["height_m"]), 3),
+        undetected_frames=int(out["undetected"].sum()), shrunk_frames=int(out["shrunk"].sum()),
+        dropped=round(float(out["dropped"].mean()), 4), filled=round(float(out["filled"].mean()), 4),
+        occluded=round(float(out["occluded"].mean()), 4), inferred=round(float(out["inferred"].mean()), 4),
+        swapped_frames=int(out["swapped"].any(1).sum()),
+        depth_reference=ref, lean=out["lean"], config=dataclasses.asdict(cfg))
+
+
+def run(clip: schema.Clip, use_depth: bool = True, cfg: CleanConfig | None = None, plots: bool = True) -> dict:
+    cfg = cfg or CleanConfig.load(clip_config_path(clip))
     cap = schema.load(clip.capture)
     depth = schema.load(clip.depth) if use_depth and clip.depth.exists() else None
-    out = clean_arrays(cap, depth, free_floor=free_floor)
+    out = clean_arrays(cap, depth, cfg)
     path = clip / ("clean_depth.npz" if depth is not None else "clean.npz")
+    lean = out.pop("lean")
     schema.save(path, cap["fps"], JOINT_NAMES, **out)
+    out["lean"] = lean
+    summ = summary(out, depth, cfg, path)
+    (clip / "clean_summary.json").write_text(json.dumps(summ, indent=2))
     _report(clip, out, path)
     if plots:
         from core import plots as P
@@ -340,17 +486,25 @@ def _report(clip, out, path):
           f"floor={out['floor_source']}, height={out['vertical_source']} ({out['height_m']:.2f} m body)")
     print(f"  dropped {out['dropped'].mean():.1%}  filled {out['filled'].mean():.1%}  "
           f"occluded {out['occluded'].mean():.1%}  swapped frames {out['swapped'].any(1).sum()}  "
-          f"inferred {out['inferred'].mean():.1%}")
+          f"inferred {out['inferred'].mean():.1%}  undetected frames {out['undetected'].sum()} "
+          f"(shrunk {out['shrunk'].sum()})")
+    lean = out["lean"]
+    if lean.get("n_frames"):
+        print(f"  torso lean vs depth: {lean['diff_deg_median']:+.1f} deg (applied {lean['applied_deg']:+.1f})")
 
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("clip")
     ap.add_argument("--no-depth", action="store_true", help="ignore depth.npz even if present")
-    ap.add_argument("--free-floor", action="store_true", help="feet floor fit with sideways tilt")
+    ap.add_argument("--free-floor", action="store_true", default=None, help="feet floor fit with sideways tilt")
+    ap.add_argument("--lean-fix", action="store_true", default=None, help="match the torso lean to Depth Pro")
+    ap.add_argument("--config", help="CleanConfig JSON (default configs/<clip>/clean.json)")
     ap.add_argument("--no-plots", action="store_true")
     a = ap.parse_args(argv)
-    run(schema.Clip(a.clip), not a.no_depth, a.free_floor, not a.no_plots)
+    clip = schema.Clip(a.clip)
+    cfg = CleanConfig.load(a.config or clip_config_path(clip), free_floor=a.free_floor, lean_fix=a.lean_fix)
+    run(clip, not a.no_depth, cfg, not a.no_plots)
 
 
 if __name__ == "__main__":
